@@ -1,0 +1,25 @@
+{
+  "name": "吃得明白 — AI 饮食记录助手",
+  "short_name": "吃得明白",
+  "description": "拍一张照片，就知道老人/病人今天吃了多少、营养够不够",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF9F3",
+  "theme_color": "#D4875A",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/assets/icon-512.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icon-192.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

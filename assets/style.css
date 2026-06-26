@@ -682,15 +682,31 @@ body {
 #labelScanModal .profile-modal-content {
   max-width: 560px;
 }
-#labelScanModal .profile-modal-body,
+#labelScanModal .profile-modal-body {
+  position: relative;
+  z-index: 2147483002;
+  padding-bottom: 120px;
+  overflow-y: auto;
+  max-height: calc(90vh - 130px);
+}
 #labelScanModal .label-upload-area,
 #labelScanModal .label-scan-result,
 #labelScanModal .label-scan-status {
   position: relative;
-  z-index: 1;
+  z-index: 2147483002;
 }
 #labelScanModal .label-scan-status {
   overflow-wrap: anywhere;
+}
+#labelScanModal .chip-group {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#labelScanModal .profile-modal-footer {
+  position: relative;
+  z-index: 2147483003;
+  background: #fff;
+  border-top: 1px solid var(--rule);
 }
 
 /* ==================== 大按钮：拍照识别（核心操作）==================== */
@@ -901,7 +917,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2147483000;
 }
 
 .voice-overlay-content {
@@ -1297,7 +1313,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
+  z-index: 2147483000;
   animation: fadeIn 0.2s ease;
 }
 .profile-modal-content {
@@ -1310,7 +1326,7 @@ body {
   overflow-x: hidden;
   box-shadow: var(--shadow-lg);
   position: relative;
-  z-index: 1;
+  z-index: 2147483001;
 }
 .profile-modal-header {
   display: flex;
@@ -2272,4 +2288,685 @@ body {
 /* ====== 大屏（桌面端）保持不变 ====== */
 @media (min-width: 769px) {
   .bottom-nav { display: none; }
+}
+
+/* ==================== 3 步使用指引 ==================== */
+.guide-bar {
+  max-width: 1200px;
+  margin: 12px auto 0;
+  padding: 0 24px;
+}
+.guide-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #FDF0E6 0%, #F5EDE4 100%);
+  border: 1px solid #E6D4C0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  position: relative;
+}
+.guide-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  transition: opacity 0.2s;
+}
+.guide-step:hover { opacity: 0.7; }
+.guide-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.guide-step-text {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.guide-arrow {
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.guide-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.guide-close:hover { background: rgba(0,0,0,0.06); }
+
+/* ==================== 空状态优化 ==================== */
+.empty-title {
+  font-size: 1.05rem !important;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px !important;
+}
+.empty-sub {
+  font-size: 0.9rem !important;
+  color: var(--muted);
+  margin-bottom: 16px !important;
+}
+.empty-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.empty-actions .btn { min-width: 100px; }
+
+/* ==================== Demo 说明横幅 ==================== */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--green-light);
+  border: 1px solid #C8DCCD;
+  border-radius: 12px;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  color: #3A6B47;
+  line-height: 1.5;
+}
+.demo-banner-icon { font-size: 1.2rem; flex-shrink: 0; }
+
+/* ==================== 视觉优化 ==================== */
+/* 卡片间距更统一 */
+.panel { margin-bottom: 0; }
+.today-summary { padding: 0; }
+.meal-records { padding: 0; }
+
+/* 大拍照按钮更精致 */
+.big-photo-btn {
+  background: linear-gradient(135deg, #FDF0E6 0%, #FFF5EE 100%);
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  padding: 36px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  text-align: center;
+}
+.big-photo-btn:hover {
+  background: linear-gradient(135deg, #FDE6D6 0%, #FFF0E6 100%);
+  border-color: var(--accent-dark);
+  box-shadow: 0 4px 16px rgba(212,135,90,0.15);
+}
+.big-photo-btn:active {
+  transform: scale(0.98);
+}
+.big-photo-icon {
+  font-size: 2.8rem;
+  filter: drop-shadow(0 2px 4px rgba(212,135,90,0.2));
+}
+.big-photo-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+.big-photo-hint {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* 语音按钮更精致 */
+.voice-quick-btn {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+.voice-quick-btn:hover {
+  border-color: var(--green);
+  background: var(--green-light);
+  box-shadow: 0 2px 12px rgba(91,160,107,0.1);
+}
+.voice-quick-btn:active { transform: scale(0.99); }
+.voice-quick-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+}
+.voice-quick-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  display: block;
+}
+.voice-quick-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  display: block;
+}
+.voice-quick-arrow {
+  color: var(--muted);
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+/* 扫描营养成分表按钮 */
+.custom-food-actions {
+  display: flex;
+  gap: 10px;
+}
+.custom-food-actions .btn {
+  flex: 1;
+  padding: 14px 12px !important;
+  font-size: 0.95rem !important;
+}
+
+/* 弹窗标题更清楚 */
+.profile-modal-header h3 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.profile-intro {
+  font-size: 0.92rem;
+  color: var(--muted);
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+
+/* 弹窗底部按钮更明确 */
+.profile-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 22px;
+  border-top: 1px solid var(--rule);
+  background: var(--bg);
+  border-radius: 0 0 14px 14px;
+}
+.profile-modal-footer .btn { flex: 1; }
+.profile-modal-footer .btn-primary {
+  font-weight: 700;
+}
+.profile-modal-footer .btn-secondary {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+/* 导出报告按钮更突出 */
+.btn-export-report {
+  transition: all 0.2s;
+  box-shadow: 0 4px 16px rgba(212,135,90,0.25);
+}
+.btn-export-report:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(212,135,90,0.35);
+}
+.btn-export-report:active {
+  transform: translateY(0);
+}
+
+/* 小按钮 */
+.btn-sm {
+  padding: 10px 18px !important;
+  font-size: 0.9rem !important;
+  border-radius: 10px !important;
+}
+
+/* 统一弹窗关闭按钮 */
+.profile-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+.profile-modal-close:hover {
+  background: rgba(0,0,0,0.06);
+  color: var(--ink);
+}
+
+/* ==================== 移动端指引优化 ==================== */
+@media (max-width: 480px) {
+  .guide-bar { padding: 0 12px; margin-top: 8px; }
+  .guide-bar-inner { padding: 10px 12px; gap: 4px; }
+  .guide-step-num { width: 24px; height: 24px; font-size: 0.8rem; }
+  .guide-step-text { font-size: 0.76rem; }
+  .guide-arrow { font-size: 0.8rem; }
+  .guide-close { top: 4px; right: 4px; }
+  .demo-banner { font-size: 0.78rem; padding: 10px 14px; }
+  .big-photo-btn { padding: 28px 16px; }
+  .big-photo-icon { font-size: 2.2rem; }
+  .big-photo-title { font-size: 1.1rem; }
+  .voice-quick-btn { padding: 14px 16px; gap: 10px; }
+  .voice-quick-icon { font-size: 1.5rem; }
+  .voice-quick-title { font-size: 0.95rem; }
+  .voice-quick-hint { font-size: 0.78rem; }
+  .empty-title { font-size: 0.95rem !important; }
+  .empty-sub { font-size: 0.82rem !important; }
+  .empty-actions .btn { min-width: 80px; padding: 10px 16px !important; }
+}
+
+/* ==================== 顶部使用指引按钮 ==================== */
+.guide-trigger-btn {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.guide-trigger-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ==================== 操作中心：3 个入口卡片 ==================== */
+.entry-center {
+  margin-bottom: 16px;
+}
+.entry-center-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+.entry-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.entry-card {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+.entry-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+}
+.entry-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.entry-card-icon {
+  font-size: 1.6rem;
+}
+.entry-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.entry-card-desc {
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.5;
+  min-height: 36px;
+}
+.entry-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+  text-decoration: none;
+  background: var(--accent);
+  color: #fff;
+  width: 100%;
+}
+.entry-card-btn:hover { opacity: 0.9; }
+.entry-card-btn:active { transform: scale(0.97); }
+.entry-card-btn-green {
+  background: var(--green);
+}
+.entry-card-btn-blue {
+  background: #4A90D9;
+}
+.entry-card-time {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ==================== 拍照进度面板 ==================== */
+.photo-progress-panel {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.progress-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.progress-panel-thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--rule);
+}
+.progress-panel-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.progress-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.progress-panel-sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.progress-step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f8f6;
+  transition: all 0.3s;
+}
+.progress-step-item.ps-active {
+  background: #FFF0E6;
+}
+.progress-step-item.ps-done {
+  background: #F0F8F0;
+}
+.progress-step-item.ps-error {
+  background: #FFF0F0;
+}
+.ps-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #ddd;
+  color: #999;
+  flex-shrink: 0;
+  transition: all 0.3s;
+}
+.ps-active .ps-icon {
+  background: var(--accent);
+  color: #fff;
+  animation: psPulse 1.5s ease-in-out infinite;
+}
+.ps-done .ps-icon {
+  background: var(--green);
+  color: #fff;
+}
+.ps-error .ps-icon {
+  background: #E85D5D;
+  color: #fff;
+}
+@keyframes psPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.ps-text {
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+.ps-active .ps-text { font-weight: 600; }
+.ps-done .ps-text { color: var(--green); }
+.ps-error .ps-text { color: #E85D5D; }
+.progress-panel-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #FFFBE6;
+  border-radius: 8px;
+  border: 1px solid #FFE89B;
+}
+.progress-panel-error {
+  margin-top: 12px;
+  padding: 14px;
+  background: #FFF0F0;
+  border: 1px solid #FFD0D0;
+  border-radius: 10px;
+}
+.pp-error-msg {
+  font-size: 0.9rem;
+  color: #C44;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.pp-error-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* ==================== 指向型新手引导浮层 ==================== */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: auto;
+}
+.onboarding-highlight {
+  position: absolute;
+  border: 3px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
+  transition: all 0.3s ease;
+  z-index: 2147483647;
+}
+.onboarding-card {
+  position: absolute;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  padding: 20px;
+  z-index: 2147483647;
+  transition: all 0.3s ease;
+}
+.onboarding-card-arrow {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  transform: rotate(45deg);
+  border: 3px solid var(--accent);
+  z-index: -1;
+}
+.onboarding-card-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.onboarding-step-num {
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 12px;
+}
+.onboarding-step-total {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.onboarding-skip {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.onboarding-skip:hover { background: #f0f0f0; }
+.onboarding-card-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.onboarding-card-body {
+  font-size: 0.92rem;
+  color: var(--ink);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+.onboarding-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.onboarding-dismiss {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.onboarding-nav-btns {
+  display: flex;
+  gap: 8px;
+}
+.onboarding-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.onboarding-btn-prev {
+  background: #f0f0f0;
+  color: var(--muted);
+}
+.onboarding-btn-prev:hover { background: #e8e8e8; }
+.onboarding-btn-next {
+  background: var(--accent);
+  color: #fff;
+}
+.onboarding-btn-next:hover { opacity: 0.9; }
+.onboarding-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ==================== 语音弹窗补充 ==================== */
+.voice-overlay-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 4px 0 12px;
+  text-align: center;
+}
+
+/* ==================== 移动端入口卡片 ==================== */
+@media (max-width: 768px) {
+  .entry-cards {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .entry-card {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    padding: 14px 16px;
+    gap: 12px;
+  }
+  .entry-card-header {
+    flex-shrink: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 56px;
+  }
+  .entry-card-icon { font-size: 1.8rem; }
+  .entry-card-title { font-size: 0.85rem; }
+  .entry-card-desc {
+    min-height: auto;
+    flex: 1;
+  }
+  .entry-card-btn {
+    width: auto;
+    padding: 8px 16px;
+    font-size: 0.88rem;
+  }
+  .entry-card-time {
+    margin-top: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .entry-card-desc { font-size: 0.78rem; }
+  .entry-card-btn { font-size: 0.82rem; padding: 8px 14px; }
+  .entry-card-time { font-size: 0.72rem; }
+  .onboarding-card { width: calc(100vw - 24px); padding: 16px; }
+  .onboarding-card-title { font-size: 1rem; }
+  .onboarding-card-body { font-size: 0.85rem; }
+  .guide-trigger-btn { font-size: 0.75rem; padding: 4px 8px; }
+  .progress-panel-thumb { width: 48px; height: 48px; }
+  .progress-panel-title { font-size: 0.9rem; }
+  .ps-text { font-size: 0.82rem; }
+  .pp-error-actions { flex-direction: column; }
 }

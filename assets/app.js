@@ -61,6 +61,17 @@
     checkBaiduAIStatus();
     initBottomNav();
 
+    // 如果用户之前关闭过引导条，不再显示
+    if (localStorage.getItem('guideDismissed') === '1') {
+      var gb = document.getElementById('guideBar');
+      if (gb) gb.style.display = 'none';
+    }
+
+    // 首次打开自动出现指向型引导
+    if (localStorage.getItem('onboardingDismissed') !== '1') {
+      setTimeout(function() { startOnboardingGuide(); }, 800);
+    }
+
     // 身高体重输入变化时更新预览
     var hEl = document.getElementById('profileHeight');
     var wEl = document.getElementById('profileWeight');
@@ -220,21 +231,12 @@
 
     var reader = new FileReader();
     reader.onload = function(e) {
-      // 显示照片
-      var displayArea = document.getElementById('photoDisplayArea');
-      var preview = document.getElementById('photoPreviewImg');
-      preview.src = e.target.result;
-      displayArea.style.display = 'block';
-      displayArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-      var statusText = document.getElementById('photoAnalyzingText');
-      statusText.innerHTML = '<span class="analyzing-icon">🔍</span> MiMo AI 正在分析这张照片...（约1-3秒）';
-      statusText.className = 'photo-analyzing-text';
-
-      // 发送到后端（后台线程模式，立即返回task_id）
       var base64Data = e.target.result;
 
-      // 食物照片压缩：最大宽度1200px，质量0.85（保留足够细节给AI识别）
+      // 显示进度面板
+      showPhotoProgress(base64Data);
+
+      // 食物照片压缩：最大宽度1200px，质量0.85
       var foodImg = new Image();
       foodImg.onload = function() {
         var foodCanvas = document.createElement('canvas');
@@ -245,8 +247,9 @@
         var foodCtx = foodCanvas.getContext('2d');
         foodCtx.drawImage(foodImg, 0, 0, foodCanvas.width, foodCanvas.height);
         var compressedFood = foodCanvas.toDataURL('image/jpeg', 0.85);
-        console.log('[食物识别] 压缩后:', Math.round(compressedFood.length * 0.75 / 1024) + 'KB',
-                    '尺寸:', foodCanvas.width + 'x' + foodCanvas.height);
+
+        // 更新进度：正在上传
+        showPhotoProgressUploading();
 
         fetch('/api/recognize', {
           method: 'POST',
@@ -255,23 +258,19 @@
         })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-          console.log('[食物识别] /api/recognize返回:', JSON.stringify(data).substring(0, 200));
           if (data.task_id) {
-            // 轮询获取结果
-            pollWithFastFallback(data.task_id, statusText);
+            pollWithProgress(data.task_id);
           } else {
-            showSmartGuess(statusText);
+            showPhotoProgressError('无法启动识别');
           }
         })
         .catch(function(err) {
-          console.error('[食物识别] 请求失败:', err);
-          showSmartGuess(statusText);
+          showPhotoProgressError('网络错误：' + err.message);
         });
       };
       foodImg.src = base64Data;
     };
     reader.readAsDataURL(file);
-    // 清空input，允许重复选同一张
     event.target.value = '';
   };
 
@@ -1489,6 +1488,358 @@
     }
   };
 
+  // 滚动到指定区域（用于指引步骤跳转）
+  window.scrollToSection = function(id) {
+    var el = document.getElementById(id) || document.querySelector('.' + id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  // ==================== 指向型新手引导 ====================
+  var onboardingSteps = [
+    {
+      target: function() { return document.getElementById('profileBtn'); },
+      title: '先设置身体情况',
+      body: '点右上角的身体情况按钮，填写年龄、性别、身高体重和胃病/控糖等情况。AI 会按这些信息调整今日营养目标和建议。',
+      mobileScrollTop: true
+    },
+    {
+      target: function() { return document.getElementById('entryPhoto'); },
+      title: '拍一张食物照片',
+      body: '适合饭菜、水果、食材。MiMo 会识别图片里的多个食物，通常需要 10-30 秒。'
+    },
+    {
+      target: function() { return document.getElementById('entryScan'); },
+      title: '扫描包装营养表',
+      body: '适合奶粉、零食、饮料、保健品等包装食品。营养表字多，可能需要 20-60 秒。'
+    },
+    {
+      target: function() { return document.getElementById('entryVoice'); },
+      title: '也可以直接说或输入',
+      body: '网页语音不稳定时，可以用手机输入法自带语音，例如"一碗米饭和一个鸡蛋"。'
+    },
+    {
+      target: function() { return document.getElementById('todaySummary') || document.querySelector('.today-summary') || document.querySelector('.export-report-section'); },
+      title: '查看建议，导出报告',
+      body: '记录食物后，这里会显示今日营养建议。需要提交或分享时，点击"导出报告"生成饮食记录报告。',
+      mobileScrollBottom: true
+    }
+  ];
+  var onboardingIndex = 0;
+
+  window.startOnboardingGuide = function() {
+    onboardingIndex = 0;
+    showOnboardingStep();
+  };
+
+  function showOnboardingStep() {
+    var step = onboardingSteps[onboardingIndex];
+    if (!step) { closeOnboarding(); return; }
+
+    var targetEl = null;
+    try { targetEl = step.target(); } catch(e) { targetEl = null; }
+
+    // 如果目标元素不存在，跳过
+    if (!targetEl) {
+      onboardingIndex++;
+      if (onboardingIndex < onboardingSteps.length) {
+        showOnboardingStep();
+      } else {
+        closeOnboarding();
+      }
+      return;
+    }
+
+    var overlay = document.getElementById('onboardingOverlay');
+    var highlight = document.getElementById('onboardingHighlight');
+    var card = document.getElementById('onboardingCard');
+    var arrow = document.getElementById('onboardingArrow');
+    var isMobile = window.innerWidth <= 768;
+
+    // 移动端：第1步先滚动到顶部
+    if (isMobile && step.mobileScrollTop) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (isMobile && step.mobileScrollBottom) {
+      // 移动端：第5步滚动到底部目标区域
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      // 桌面端：滚动到目标元素
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // 等滚动完成后再定位
+    setTimeout(function() {
+      var rect = targetEl.getBoundingClientRect();
+      var padding = 8;
+      var winW = window.innerWidth;
+      var winH = window.innerHeight;
+
+      // 确保高亮框在视口内
+      var hlTop = Math.max(4, rect.top - padding);
+      var hlLeft = Math.max(4, rect.left - padding);
+      var hlWidth = Math.min(rect.width + padding * 2, winW - 8);
+      var hlHeight = rect.height + padding * 2;
+
+      // 如果目标在视口外，调整高亮到可见区域
+      if (rect.top + rect.height < 0 || rect.top > winH) {
+        hlTop = 4;
+        hlHeight = 40;
+      }
+
+      highlight.style.top = hlTop + 'px';
+      highlight.style.left = hlLeft + 'px';
+      highlight.style.width = hlWidth + 'px';
+      highlight.style.height = hlHeight + 'px';
+
+      // 定位卡片
+      var cardW = isMobile ? Math.min(380, winW - 24) : 380;
+      var cardH = 240;
+      var cardTop, cardLeft;
+
+      if (!isMobile) {
+        // 桌面端：卡片在目标右侧或下方
+        if (rect.right + cardW + 20 < winW) {
+          cardLeft = rect.right + 20;
+          cardTop = rect.top;
+          arrow.style.left = '-8px';
+          arrow.style.top = '20px';
+          arrow.style.borderRight = 'none';
+          arrow.style.borderTop = 'none';
+        } else {
+          cardLeft = Math.max(16, rect.left);
+          cardTop = rect.bottom + 16;
+          arrow.style.left = '20px';
+          arrow.style.top = '-8px';
+          arrow.style.borderBottom = 'none';
+          arrow.style.borderLeft = 'none';
+        }
+      } else {
+        // 移动端：卡片固定在底部
+        cardLeft = 12;
+        cardTop = winH - cardH - 12;
+
+        // 箭头指向高亮区域
+        var arrowX = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
+        var arrowY = -8;
+        // 如果高亮在卡片上方，箭头朝上
+        arrow.style.left = (arrowX - cardLeft - 8) + 'px';
+        arrow.style.top = arrowY + 'px';
+        arrow.style.borderBottom = 'none';
+        arrow.style.borderLeft = 'none';
+      }
+
+      // 边界检查
+      if (cardTop + cardH > winH) cardTop = winH - cardH - 12;
+      if (cardTop < 12) cardTop = 12;
+      if (cardLeft + cardW > winW - 12) cardLeft = winW - cardW - 12;
+      if (cardLeft < 12) cardLeft = 12;
+
+      card.style.top = cardTop + 'px';
+      card.style.left = cardLeft + 'px';
+      card.style.width = cardW + 'px';
+
+      overlay.style.display = 'block';
+    }, isMobile ? 500 : 300);
+
+    // 更新卡片内容
+    document.getElementById('obStepNum').textContent = onboardingIndex + 1;
+    document.getElementById('obTitle').textContent = step.title;
+    document.getElementById('obBody').textContent = step.body;
+
+    // 更新按钮
+    document.getElementById('obPrev').style.display = onboardingIndex > 0 ? 'inline-flex' : 'none';
+    var nextBtn = document.getElementById('obNext');
+    if (onboardingIndex === onboardingSteps.length - 1) {
+      nextBtn.textContent = '完成';
+    } else {
+      nextBtn.textContent = '下一步';
+    }
+  }
+
+  window.onboardingNext = function() {
+    if (onboardingIndex < onboardingSteps.length - 1) {
+      onboardingIndex++;
+      showOnboardingStep();
+    } else {
+      closeOnboarding();
+    }
+  };
+
+  window.onboardingPrev = function() {
+    if (onboardingIndex > 0) {
+      onboardingIndex--;
+      showOnboardingStep();
+    }
+  };
+
+  window.closeOnboarding = function() {
+    var overlay = document.getElementById('onboardingOverlay');
+    if (overlay) overlay.style.display = 'none';
+    var cb = document.getElementById('obDontShow');
+    if (cb && cb.checked) {
+      localStorage.setItem('onboardingDismissed', '1');
+    }
+  };
+
+  // ==================== 拍照进度面板 ====================
+  var lastPhotoDataUrl = null;
+
+  function showPhotoProgress(dataUrl) {
+    lastPhotoDataUrl = dataUrl;
+    var panel = document.getElementById('photoProgressPanel');
+    var thumb = document.getElementById('progressPanelThumb');
+    var displayArea = document.getElementById('photoDisplayArea');
+
+    if (thumb) thumb.src = dataUrl;
+    if (panel) panel.style.display = 'block';
+    if (displayArea) displayArea.style.display = 'none';
+
+    updatePhotoProgressStep(1, 'done');
+    updatePhotoProgressStep(2, 'active');
+    updatePhotoProgressStep(3, 'waiting');
+    updatePhotoProgressStep(4, 'waiting');
+
+    var sub = document.getElementById('progressPanelSub');
+    if (sub) sub.textContent = '正在压缩上传...';
+    var hint = document.getElementById('progressPanelHint');
+    if (hint) hint.textContent = '识别时间较长，请不要关闭页面';
+    var errBox = document.getElementById('progressPanelError');
+    if (errBox) errBox.style.display = 'none';
+
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function updatePhotoProgressStep(step, status) {
+    var el = document.getElementById('ps' + step);
+    if (!el) return;
+    el.classList.remove('ps-active', 'ps-done', 'ps-error', 'ps-waiting');
+    el.classList.add('ps-' + status);
+    var icon = el.querySelector('.ps-icon');
+    if (icon) {
+      if (status === 'done') icon.textContent = '✓';
+      else if (status === 'active') icon.textContent = '●';
+      else if (status === 'error') icon.textContent = '✕';
+      else icon.textContent = '○';
+    }
+  }
+
+  function showPhotoProgressUploading() {
+    updatePhotoProgressStep(2, 'done');
+    updatePhotoProgressStep(3, 'active');
+    var sub = document.getElementById('progressPanelSub');
+    if (sub) sub.textContent = 'MiMo 正在看图识别，通常需要 10-30 秒';
+  }
+
+  function showPhotoProgressMatching() {
+    updatePhotoProgressStep(3, 'done');
+    updatePhotoProgressStep(4, 'active');
+    var sub = document.getElementById('progressPanelSub');
+    if (sub) sub.textContent = '正在匹配营养数据...';
+  }
+
+  function showPhotoProgressDone() {
+    updatePhotoProgressStep(4, 'done');
+    var sub = document.getElementById('progressPanelSub');
+    if (sub) sub.textContent = '识别完成！';
+    var panel = document.getElementById('photoProgressPanel');
+    setTimeout(function() { if (panel) panel.style.display = 'none'; }, 1500);
+  }
+
+  function showPhotoProgressError(msg) {
+    updatePhotoProgressStep(3, 'error');
+    var sub = document.getElementById('progressPanelSub');
+    if (sub) sub.textContent = '识别失败';
+    var errBox = document.getElementById('progressPanelError');
+    var errMsg = document.getElementById('ppErrorMsg');
+    if (errMsg) errMsg.textContent = msg || '识别超时或失败';
+    if (errBox) errBox.style.display = 'block';
+  }
+
+  window.retryPhotoRecognize = function() {
+    var panel = document.getElementById('photoProgressPanel');
+    if (panel) panel.style.display = 'none';
+    if (lastPhotoDataUrl) {
+      // 模拟重新选择文件
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas');
+        var maxW = 1200;
+        var scale = Math.min(1, maxW / img.width);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        var compressed = canvas.toDataURL('image/jpeg', 0.85);
+
+        showPhotoProgress(lastPhotoDataUrl);
+        // 延迟一下让 UI 先渲染
+        setTimeout(function() {
+          showPhotoProgressUploading();
+          fetch('/api/recognize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: compressed })
+          })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.task_id) {
+              pollWithProgress(data.task_id);
+            } else {
+              showPhotoProgressError('无法启动识别');
+            }
+          })
+          .catch(function() {
+            showPhotoProgressError('网络错误');
+          });
+        }, 300);
+      };
+      img.src = lastPhotoDataUrl;
+    }
+  };
+
+  // 轮询带进度面板
+  function pollWithProgress(taskId) {
+    var pollCount = 0;
+    var maxPolls = 120;
+
+    function poll() {
+      pollCount++;
+      if (pollCount > maxPolls) {
+        showPhotoProgressError('已等待超过 60 秒，请重试或改用文字输入');
+        return;
+      }
+
+      fetch('/api/result/' + taskId)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if ((data.success === true || data.status === 'done') && data.foods && data.foods.length > 0) {
+            showPhotoProgressMatching();
+            setTimeout(function() {
+              showPhotoProgressDone();
+              var statusEl = document.getElementById('photoAnalyzingText');
+              showRecognizedFoods(data.foods, statusEl);
+            }, 500);
+          } else if (data.status === 'pending') {
+            var sub = document.getElementById('progressPanelSub');
+            if (sub) {
+              var secLeft = Math.ceil((maxPolls - pollCount) * 0.5);
+              if (secLeft < 20) {
+                sub.textContent = '快好了...（约 ' + secLeft + ' 秒）';
+              }
+            }
+            setTimeout(poll, 500);
+          } else if (data.status === 'error' || data.success === false) {
+            showPhotoProgressError(data.error || '识别失败');
+          } else {
+            setTimeout(poll, 500);
+          }
+        })
+        .catch(function() { setTimeout(poll, 800); });
+    }
+    poll();
+  }
+
   window.setAge = function(age) {
     state.selectedAge = age;
     var btns = document.querySelectorAll('.age-btn');
@@ -2111,7 +2462,7 @@
     var statusBar = document.createElement('div');
     statusBar.className = 'label-scan-status';
     statusBar.id = 'labelScanStatusBar';
-    statusBar.innerHTML = '<span class="analyzing-icon">📷</span> 正在压缩图片...';
+    statusBar.innerHTML = '<span class="analyzing-icon">📷</span> 图片已收到，正在压缩上传...';
     resultDiv.parentNode.insertBefore(statusBar, resultDiv);
 
     // ===== 客户端压缩图片 =====
@@ -2137,7 +2488,7 @@
                   '尺寸:', canvas.width + 'x' + canvas.height, '质量: 0.92');
 
       // ====== 优先走 MiMo AI（后端），Tesseract作为备用 ======
-      updateLabelStatus('🔍 MiMo AI 正在识别营养成分表...（约1-3秒）', false);
+      updateLabelStatus('🔍 MiMo AI 正在识别表格文字...（营养表字多，可能需要 20-60 秒，请稍等）', false);
 
       fetch('/api/scan_label', {
         method: 'POST',
@@ -2176,18 +2527,18 @@
           if (data.label.weight) parsed.weight = data.label.weight;
           if (data.label.unit) parsed.unit = data.label.unit;
           fillLabelScanForm(parsed);
-          updateLabelStatus('✅ MiMo AI 识别完成，请确认后保存', false);
+          updateLabelStatus('✅ 识别完成，请检查结果后保存', false);
         } else if (data.success && data.task_id) {
           // 图像理解降级模式，需要轮询
           console.log('[扫描] 进入图像理解降级模式，task_id:', data.task_id);
-          updateLabelStatus('🔍 MiMo AI 正在理解图片内容...（约1-3秒）', false);
+          updateLabelStatus('🔍 正在结构化营养素...（约1-3秒）', false);
           pollLabelScanResult(data.task_id, 0);
         } else if (data.success === false) {
           // MiMo 明确返回失败，显示错误原因后走 Tesseract
           var errMsg = data.error || '未知错误';
           var rawPreview = data.raw_preview || '';
           console.warn('[扫描] MiMo失败:', errMsg, 'raw_preview:', rawPreview);
-          updateLabelStatus('⚠️ MiMo 本次识别失败：' + errMsg + '；正在使用本地 OCR 备用...', true);
+          updateLabelStatus('⚠️ MiMo 本次识别超时，已尝试本地 OCR。你可以重试、换清晰图片，或手动填写。', true);
           tryTesseractFallback(compressedBase64, errMsg);
         } else {
           console.warn('[扫描] MiMo返回未知结构:', JSON.stringify(data).substring(0, 200));
@@ -2803,6 +3154,30 @@
 
     console.log('[报告] 数据收集完成，发送到后端生成HTML');
 
+    // 显示 loading 状态
+    var exportBtn = document.querySelector('.btn-export-report');
+    var originalText = '';
+    if (exportBtn) {
+      originalText = exportBtn.innerHTML;
+      exportBtn.innerHTML = '⏳ 正在生成报告...';
+      exportBtn.disabled = true;
+      exportBtn.style.opacity = '0.7';
+      exportBtn.style.pointerEvents = 'none';
+    }
+
+    // 显示提示
+    var loadingHint = document.createElement('div');
+    loadingHint.id = 'reportLoadingHint';
+    loadingHint.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2D2A24;color:#fff;padding:12px 24px;border-radius:10px;font-size:0.9rem;z-index:2147483647;text-align:center;max-width:90vw;';
+    loadingHint.innerHTML = 'AI 正在整理饮食明细和建议，可能需要 10-30 秒，请不要关闭页面。';
+    document.body.appendChild(loadingHint);
+
+    var loadingTimer = setTimeout(function() {
+      if (document.getElementById('reportLoadingHint')) {
+        document.getElementById('reportLoadingHint').innerHTML = '生成时间较长，仍在处理中，请稍等。';
+      }
+    }, 45000);
+
     fetch('/api/export_report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2810,15 +3185,54 @@
     })
     .then(function(res) { return res.text(); })
     .then(function(html) {
-      // 在新窗口打开报告
-      var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      console.log('[报告] 报告已在新窗口打开');
+      clearTimeout(loadingTimer);
+      var hint = document.getElementById('reportLoadingHint');
+      if (hint) hint.remove();
+
+      // 恢复按钮
+      if (exportBtn) {
+        exportBtn.innerHTML = originalText;
+        exportBtn.disabled = false;
+        exportBtn.style.opacity = '';
+        exportBtn.style.pointerEvents = '';
+      }
+
+      // 优先用 window.open + document.write（比 Blob URL 更稳定）
+      var win = window.open('', '_blank');
+      if (win) {
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        console.log('[报告] 报告已在新窗口打开');
+      } else {
+        // 弹窗被拦截，降级为下载 report.html
+        console.warn('[报告] 弹窗被拦截，降级为下载');
+        var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '饮食报告_' + new Date().toLocaleDateString('zh-CN').replace(/\//g, '') + '.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+        console.log('[报告] 报告已下载');
+      }
     })
     .catch(function(err) {
+      clearTimeout(loadingTimer);
+      var hint = document.getElementById('reportLoadingHint');
+      if (hint) hint.remove();
+
+      // 恢复按钮
+      if (exportBtn) {
+        exportBtn.innerHTML = originalText;
+        exportBtn.disabled = false;
+        exportBtn.style.opacity = '';
+        exportBtn.style.pointerEvents = '';
+      }
+
       console.error('[报告] 生成失败:', err);
-      alert('报告生成失败: ' + err.message);
+      alert('报告生成失败: ' + err.message + '\n\n请重试，或检查网络连接。');
     });
   };
 

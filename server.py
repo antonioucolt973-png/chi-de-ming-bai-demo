@@ -43,7 +43,7 @@ except ImportError:
     MIMO_API_KEY = os.environ.get('MIMO_API_KEY', '')
     MIMO_BASE_URL = os.environ.get('MIMO_BASE_URL', 'https://api.xiaomimimo.com/v1/chat/completions')
     MIMO_MODEL = os.environ.get('MIMO_MODEL', 'mimo-v2.5')
-    MIMO_TIMEOUT = int(os.environ.get('MIMO_TIMEOUT', '30'))
+    MIMO_TIMEOUT = int(os.environ.get('MIMO_TIMEOUT', '90'))
     MIMO_READY = bool(MIMO_API_KEY) and len(MIMO_API_KEY) > 10
 
 app = Flask(__name__, static_folder=BASE_DIR)
@@ -1790,12 +1790,14 @@ def export_report():
                   <td colspan="2"><span style="color:#8A847C;">无目标值</span></td>
                 </tr>'''
 
-        # ====== 每日明细表格行 ======
+        # ====== 每日明细表格行（桌面端表格 + 移动端卡片）======
         daily_rows = ''
+        daily_cards = ''
         for d in daily_data:
             t = d['totals']
             cal_p = round(t['cal'] / cal_target * 100) if cal_target else 0
             cal_color = '#6B9E7A' if cal_p >= 80 else '#D4875A' if cal_p >= 60 else '#E55'
+            # 桌面端表格行
             daily_rows += f'''<tr>
               <td>{d['dateStr']} 周{d['weekday']}</td>
               <td>{d['mealCount']}餐</td>
@@ -1807,6 +1809,22 @@ def export_report():
               <td>{t['na']}mg</td>
               <td><span style="color:{cal_color};font-weight:600;">{cal_p}%</span></td>
             </tr>'''
+            # 移动端卡片
+            daily_cards += f'''<div class="daily-card">
+              <div class="daily-card-header">
+                <span class="daily-card-date">{d['dateStr']} 周{d['weekday']}</span>
+                <span class="daily-card-meals">{d['mealCount']}餐</span>
+                <span class="daily-card-pct" style="color:{cal_color};">达标{cal_p}%</span>
+              </div>
+              <div class="daily-card-grid">
+                <div class="daily-card-item"><span class="dc-label">热量</span><span class="dc-value"><strong>{t['cal']}</strong>千卡</span></div>
+                <div class="daily-card-item"><span class="dc-label">蛋白质</span><span class="dc-value">{t['protein']}g</span></div>
+                <div class="daily-card-item"><span class="dc-label">脂肪</span><span class="dc-value">{t['fat']}g</span></div>
+                <div class="daily-card-item"><span class="dc-label">碳水</span><span class="dc-value">{t['carb']}g</span></div>
+                <div class="daily-card-item"><span class="dc-label">纤维</span><span class="dc-value">{t['fiber']}g</span></div>
+                <div class="daily-card-item"><span class="dc-label">钠</span><span class="dc-value">{t['na']}mg</span></div>
+              </div>
+            </div>'''
 
         # ====== 三餐分布分析 ======
         meal_dist_html = ''
@@ -1914,7 +1932,7 @@ def export_report():
 <title>饮食记录报告 - 吃得明白</title>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background:#FFF8F0; color:#2D2A24; line-height:1.7; padding:20px; }}
+body {{ font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background:#FFF8F0; color:#2D2A24; line-height:1.7; padding:20px; overflow-x:hidden; word-wrap:break-word; }}
 .container {{ max-width:800px; margin:0 auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.08); }}
 .header {{ background:linear-gradient(135deg, #D4875A, #E8A070); color:#fff; padding:30px; text-align:center; }}
 .header h1 {{ font-size:1.8rem; margin-bottom:8px; }}
@@ -1959,7 +1977,49 @@ tbody tr:hover {{ background:#FDF0E6; }}
 .meal-dist-cal {{ font-size:0.82rem; color:#8A847C; white-space:nowrap; }}
 .food-tag {{ display:inline-block; background:#FDF0E6; padding:4px 12px; border-radius:12px; font-size:0.82rem; margin:4px 4px 4px 0; }}
 @media print {{ body {{ padding:0; }} .container {{ box-shadow:none; }} }}
-@media (max-width:600px) {{ .info-grid {{ grid-template-columns:repeat(2,1fr); }} table {{ font-size:0.78rem; }} .meal-detail {{ flex-wrap:wrap; }} .bar-container {{ width:60px; }} }}
+@media (max-width:600px) {{
+  body {{ padding:8px; }}
+  .container {{ border-radius:8px; }}
+  .header {{ padding:20px 16px; }}
+  .header h1 {{ font-size:1.4rem; }}
+  .section {{ padding:16px; }}
+  .section h2 {{ font-size:1rem; }}
+  table {{ font-size:0.78rem; }}
+  .meal-detail {{ flex-wrap:wrap; gap:6px; }}
+  .bar-container {{ width:60px; }}
+  .daily-table-wrapper {{ display:none; }}
+  .daily-cards {{ display:block; }}
+  .daily-card {{
+    background:#FDF0E6; border-radius:10px; padding:14px; margin-bottom:12px;
+    border:1px solid #F0E0D0;
+  }}
+  .daily-card-header {{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:10px; padding-bottom:8px; border-bottom:1px dashed #E0D5C8;
+    flex-wrap:wrap; gap:4px;
+  }}
+  .daily-card-date {{ font-weight:700; font-size:0.95rem; color:#2D2A24; }}
+  .daily-card-meals {{ font-size:0.82rem; color:#8A847C; }}
+  .daily-card-pct {{ font-size:0.85rem; font-weight:600; }}
+  .daily-card-grid {{
+    display:grid; grid-template-columns:repeat(2,1fr); gap:8px;
+  }}
+  .daily-card-item {{
+    display:flex; flex-direction:column; gap:2px;
+    padding:6px 8px; background:#fff; border-radius:6px;
+  }}
+  .dc-label {{ font-size:0.75rem; color:#8A847C; }}
+  .dc-value {{ font-size:0.9rem; font-weight:600; color:#2D2A24; }}
+  .meal-type {{ font-size:0.75rem; padding:1px 8px; }}
+  .meal-time {{ font-size:0.75rem; }}
+  .meal-cal {{ font-size:0.82rem; }}
+  .nutrient-table {{ font-size:0.75rem; }}
+  .nutrient-table th, .nutrient-table td {{ padding:4px 4px; }}
+}}
+@media (min-width:601px) {{
+  .daily-cards {{ display:none; }}
+  .daily-table-wrapper {{ display:block; }}
+}}
 </style>
 </head>
 <body>
@@ -2023,13 +2083,17 @@ tbody tr:hover {{ background:#FDF0E6; }}
 
   <div class="section">
     <h2>📅 每日饮食明细</h2>
-    <table>
-      <thead>
-        <tr><th>日期</th><th>餐次</th><th>热量</th><th>蛋白质</th><th>脂肪</th><th>碳水</th><th>纤维</th><th>钠</th><th>达标率</th></tr>
-      </thead>
-      <tbody>{daily_rows}
-      </tbody>
-    </table>
+    <div class="daily-table-wrapper">
+      <table class="daily-table">
+        <thead>
+          <tr><th>日期</th><th>餐次</th><th>热量</th><th>蛋白质</th><th>脂肪</th><th>碳水</th><th>纤维</th><th>钠</th><th>达标率</th></tr>
+        </thead>
+        <tbody>{daily_rows}
+        </tbody>
+      </table>
+    </div>
+    <div class="daily-cards">{daily_cards}
+    </div>
   </div>
 
   <div class="section">

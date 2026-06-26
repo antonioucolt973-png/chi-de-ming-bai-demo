@@ -246,8 +246,11 @@ git push origin main
 | Build Command | `pip install -r requirements.txt` |
 | Start Command | `python start_prod.py` |
 | Environment Variable | `MIMO_API_KEY` = 你的真实 key |
+| Environment Variable | `MIMO_TIMEOUT` = `90`（Render 免费实例较慢，建议增大超时） |
 
 > 注意：`start_prod.py` 会自动读取 `PORT` 环境变量（云平台自动注入），绑定 `0.0.0.0`，使用 waitress 8 线程，debug=False。
+>
+> Render 免费实例性能较低，MiMo 营养成分表 OCR + 结构化可能耗时超过 30 秒。请务必设置 `MIMO_TIMEOUT=90`，否则会超时失败。
 
 **4. 部署后验证**
 

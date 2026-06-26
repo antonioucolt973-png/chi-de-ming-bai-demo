@@ -13,7 +13,7 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/assets/icon-192.jpg">
 <link rel="icon" href="/assets/icon-192.jpg" type="image/jpeg">
-<link rel="stylesheet" href="assets/style.css?v=20260624m">
+<link rel="stylesheet" href="assets/style.css?v=20260626ui3">
 <title>吃得明白 — AI 饮食记录助手</title>
 </head>
 <body>
@@ -27,6 +27,7 @@
     </div>
     <div class="topbar-right">
       <span class="date-display" id="todayDate"></span>
+      <button class="guide-trigger-btn" onclick="startOnboardingGuide()" title="使用指引">📖 使用指引</button>
       <button class="profile-btn" id="profileBtn" onclick="toggleProfile()">
         <span id="profileSummary">👤 未设置</span>
       </button>
@@ -38,11 +39,11 @@
 <div class="profile-modal" id="profileModal" style="display:none;">
   <div class="profile-modal-content">
     <div class="profile-modal-header">
-      <h3>👤 用户档案</h3>
-      <button class="close-btn" onclick="toggleProfile()">✕</button>
+      <h3>👤 设置身体情况</h3>
+      <button class="profile-modal-close" onclick="toggleProfile()">✕</button>
     </div>
     <div class="profile-modal-body">
-      <p class="profile-intro">告诉我们使用人的情况，让营养估算更准确。点一下就可以啦。</p>
+      <p class="profile-intro">填写后，AI 会根据您的年龄、性别和健康情况，生成更贴合的营养建议。</p>
 
       <div class="profile-form">
         <div class="form-row">
@@ -159,75 +160,127 @@
   </div>
 </div>
 
+<!-- ============ 3 步使用指引 ============ -->
+<div class="guide-bar" id="guideBar">
+  <div class="guide-bar-inner">
+    <div class="guide-step" onclick="toggleProfile()">
+      <span class="guide-step-num">1</span>
+      <span class="guide-step-text">设置身体情况</span>
+    </div>
+    <span class="guide-arrow">→</span>
+    <div class="guide-step" onclick="document.getElementById('bigPhotoInput').click()">
+      <span class="guide-step-num">2</span>
+      <span class="guide-step-text">拍照/输入吃了什么</span>
+    </div>
+    <span class="guide-arrow">→</span>
+    <div class="guide-step" onclick="scrollToSection('summary')">
+      <span class="guide-step-num">3</span>
+      <span class="guide-step-text">查看营养建议</span>
+    </div>
+    <button class="guide-close" onclick="document.getElementById('guideBar').style.display='none';localStorage.setItem('guideDismissed','1')">✕</button>
+  </div>
+</div>
+
 <!-- ============ 主容器 ============ -->
 <div class="app-container">
 
   <!-- ============ 左侧：录入面板 ============ -->
   <div class="panel panel-input">
 
-    <!-- 大按钮：拍照识别（主要操作） -->
-    <div class="big-photo-section">
-      <label class="big-photo-btn" for="bigPhotoInput">
-        <span class="big-photo-icon">📸</span>
-        <span class="big-photo-title">拍一张食物照片</span>
-        <span class="big-photo-hint">AI 自动识别并记录</span>
-      </label>
-      <input type="file" id="bigPhotoInput" accept="image/*" style="display:none;" onchange="handleBigPhotoUpload(event)">
+    <!-- ============ 操作中心：3 个入口 ============ -->
+    <div class="entry-center">
+      <h3 class="entry-center-title">今天吃了什么？</h3>
+      <div class="entry-cards">
+
+        <!-- 入口 1：拍一餐 -->
+        <div class="entry-card entry-card-photo" id="entryPhoto">
+          <div class="entry-card-header">
+            <span class="entry-card-icon">📸</span>
+            <span class="entry-card-title">拍一餐</span>
+          </div>
+          <p class="entry-card-desc">适合饭菜、水果、食材，一次可识别多个食物</p>
+          <label class="entry-card-btn" for="bigPhotoInput">
+            拍照 / 上传
+          </label>
+          <input type="file" id="bigPhotoInput" accept="image/*" style="display:none;" onchange="handleBigPhotoUpload(event)">
+          <span class="entry-card-time">⏱ 约 10-30 秒</span>
+        </div>
+
+        <!-- 入口 2：扫包装 -->
+        <div class="entry-card entry-card-scan" id="entryScan">
+          <div class="entry-card-header">
+            <span class="entry-card-icon">📷</span>
+            <span class="entry-card-title">扫包装</span>
+          </div>
+          <p class="entry-card-desc">适合奶粉、零食、饮料、保健品等有包装的食品</p>
+          <button class="entry-card-btn entry-card-btn-green" onclick="openLabelScanner()">
+            扫营养表
+          </button>
+          <span class="entry-card-time">⏱ 约 20-60 秒</span>
+        </div>
+
+        <!-- 入口 3：说/输入 -->
+        <div class="entry-card entry-card-voice" id="entryVoice">
+          <div class="entry-card-header">
+            <span class="entry-card-icon">🎤</span>
+            <span class="entry-card-title">说/输入</span>
+          </div>
+          <p class="entry-card-desc">可用手机输入法语音，例如"一碗米饭和一个鸡蛋"</p>
+          <button class="entry-card-btn entry-card-btn-blue" onclick="quickVoiceRecord()">
+            文字输入
+          </button>
+          <span class="entry-card-time">⏱ 约 3-10 秒</span>
+        </div>
+
+      </div>
       <div id="aiEngineBadge" class="ai-engine-badge" style="display:none;">
         <span class="badge-dot"></span>
         <span id="aiEngineText">MiMo AI 菜品识别</span>
       </div>
     </div>
 
-    <!-- 照片预览和识别状态 -->
+    <!-- 拍照进度面板 -->
+    <div class="photo-progress-panel" id="photoProgressPanel" style="display:none;">
+      <div class="progress-panel-header">
+        <img class="progress-panel-thumb" id="progressPanelThumb" alt="预览">
+        <div class="progress-panel-title-group">
+          <span class="progress-panel-title">正在识别食物</span>
+          <span class="progress-panel-sub" id="progressPanelSub">请稍候...</span>
+        </div>
+      </div>
+      <div class="progress-steps">
+        <div class="progress-step-item" id="ps1">
+          <span class="ps-icon">✓</span>
+          <span class="ps-text">已选择图片</span>
+        </div>
+        <div class="progress-step-item" id="ps2">
+          <span class="ps-icon">○</span>
+          <span class="ps-text">正在压缩上传</span>
+        </div>
+        <div class="progress-step-item" id="ps3">
+          <span class="ps-icon">○</span>
+          <span class="ps-text">MiMo 正在识别食物，预计 10-30 秒</span>
+        </div>
+        <div class="progress-step-item" id="ps4">
+          <span class="ps-icon">○</span>
+          <span class="ps-text">正在匹配营养数据</span>
+        </div>
+      </div>
+      <div class="progress-panel-hint" id="progressPanelHint">识别时间较长，请不要关闭页面</div>
+      <div class="progress-panel-error" id="progressPanelError" style="display:none;">
+        <p class="pp-error-msg" id="ppErrorMsg"></p>
+        <div class="pp-error-actions">
+          <button class="btn btn-primary btn-sm" onclick="retryPhotoRecognize()">重试</button>
+          <button class="btn btn-secondary btn-sm" onclick="quickVoiceRecord()">改用文字输入</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 照片预览（保留兼容） -->
     <div class="photo-display-area" id="photoDisplayArea" style="display:none;">
       <img class="photo-preview-img" id="photoPreviewImg" alt="照片">
       <div class="photo-analyzing-text" id="photoAnalyzingText">
         <span class="analyzing-icon">🔍</span> AI 正在识别这张照片...
-      </div>
-    </div>
-
-    <!-- ============ 一键记录：常用食物 ============ -->
-    <div class="quick-food-section">
-      <h3 class="section-title section-title-lg">
-        <span class="section-icon">⚡</span> 常用食物，点一下就记录
-      </h3>
-      <div class="quick-food-grid" id="quickFoodGrid">
-        <!-- 常用食物按钮由 JS 生成 -->
-      </div>
-    </div>
-
-    <!-- ============ 语音入口 ============ -->
-    <div class="voice-quick-section">
-      <button class="voice-quick-btn" onclick="quickVoiceRecord()">
-        <span class="voice-quick-icon">🎤</span>
-        <span class="voice-quick-text">
-          <span class="voice-quick-title">说一声也可以</span>
-          <span class="voice-quick-hint">例如："我吃了一碗米饭和鸡蛋"</span>
-        </span>
-        <span class="voice-quick-arrow">→</span>
-      </button>
-    </div>
-
-    <!-- ============ 我的常吃食物 ============ -->
-    <div class="custom-food-section">
-      <div class="section-header" onclick="toggleCustomFood()">
-        <span class="section-icon">📋</span>
-        <span class="section-title-inline">我常吃的食物</span>
-        <span class="section-toggle" id="customFoodToggle">▼</span>
-      </div>
-      <div class="custom-food-content" id="customFoodContent" style="display:none;">
-        <div class="custom-food-actions">
-          <button class="btn btn-primary btn-inline btn-lg" onclick="openLabelScanner()">
-            <span>📷</span> 扫描营养成分表
-          </button>
-          <button class="btn btn-secondary btn-inline btn-lg" onclick="openManualFoodForm()">
-            <span>✏️</span> 手动添加
-          </button>
-        </div>
-        <div class="custom-food-list" id="customFoodList">
-          <div class="custom-food-empty">还没有添加自定义食物</div>
-        </div>
       </div>
     </div>
 
@@ -246,18 +299,47 @@
       </div>
     </div>
 
-    <!-- ============ 语音识别中 ============ -->
+    <!-- ============ 快速添加常见食物 ============ -->
+    <div class="quick-food-section">
+      <h3 class="section-title section-title-lg">
+        <span class="section-icon">⚡</span> 快速添加常见食物
+      </h3>
+      <div class="quick-food-grid" id="quickFoodGrid">
+        <!-- 常用食物按钮由 JS 生成 -->
+      </div>
+    </div>
+
+    <!-- ============ 我的常吃食物 ============ -->
+    <div class="custom-food-section">
+      <div class="section-header" onclick="toggleCustomFood()">
+        <span class="section-icon">📋</span>
+        <span class="section-title-inline">我常吃的食物</span>
+        <span class="section-toggle" id="customFoodToggle">▼</span>
+      </div>
+      <div class="custom-food-content" id="customFoodContent" style="display:none;">
+        <div class="custom-food-actions">
+          <button class="btn btn-secondary btn-inline btn-lg" onclick="openManualFoodForm()">
+            <span>✏️</span> 手动添加
+          </button>
+        </div>
+        <div class="custom-food-list" id="customFoodList">
+          <div class="custom-food-empty">还没有添加自定义食物</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 语音/文字输入弹窗 ============ -->
     <div class="voice-overlay" id="voiceOverlay" style="display:none;">
       <div class="voice-overlay-content">
         <div class="voice-overlay-icon">🎤</div>
-        <p class="voice-overlay-text">说出或输入您吃了什么？</p>
-        <div id="voiceLiveText" class="voice-live-text">正在聆听，请说话...</div>
+        <p class="voice-overlay-text">说出或输入你吃了什么</p>
+        <p class="voice-overlay-hint">可以直接打字，也可以用手机输入法自带语音输入</p>
+        <div id="voiceLiveText" class="voice-live-text" contenteditable="true" style="min-height:48px;"></div>
         <div class="voice-presets">
           <span class="voice-preset-label">快速输入：</span>
-          <button class="voice-preset-btn" data-text="一碗米饭、番茄炒蛋和青菜">米饭+番茄炒蛋</button>
-          <button class="voice-preset-btn" data-text="一碗白粥和一个煮鸡蛋">白粥+鸡蛋</button>
-          <button class="voice-preset-btn" data-text="一碗面条和一杯牛奶">面条+牛奶</button>
-          <button class="voice-preset-btn" data-text="一个馒头和一杯豆浆">馒头+豆浆</button>
+          <button class="voice-preset-btn" data-text="一碗米饭和一个鸡蛋">米饭+鸡蛋</button>
+          <button class="voice-preset-btn" data-text="一碗白粥和一杯牛奶">白粥+牛奶</button>
+          <button class="voice-preset-btn" data-text="一碗面条和一盘青菜">面条+青菜</button>
           <button class="voice-preset-btn" data-text="一个苹果和一杯酸奶">苹果+酸奶</button>
         </div>
         <div class="voice-timer">剩余 <span id="voiceTimer">30</span> 秒</div>
@@ -273,10 +355,10 @@
       <div class="profile-modal-content">
         <div class="profile-modal-header">
           <h3>✏️ 添加常吃食物</h3>
-          <button class="close-btn" onclick="closeManualFoodForm()">✕</button>
+          <button class="profile-modal-close" onclick="closeManualFoodForm()">✕</button>
         </div>
         <div class="profile-modal-body">
-          <p class="profile-intro">根据包装袋上的营养成分表填写。</p>
+          <p class="profile-intro">根据包装袋上的营养成分表填写，保存后可随时一键记录。</p>
 
           <div class="profile-form">
             <div class="form-row">
@@ -326,10 +408,10 @@
       <div class="profile-modal-content">
         <div class="profile-modal-header">
           <h3>📷 扫描营养成分表</h3>
-          <button class="close-btn" onclick="closeLabelScanner()">✕</button>
+          <button class="profile-modal-close" onclick="closeLabelScanner()">✕</button>
         </div>
         <div class="profile-modal-body">
-          <p class="profile-intro">把食物包装翻到营养成分表那一面，拍一张照片就行。</p>
+          <p class="profile-intro">把食物包装翻到营养成分表那一面，拍一张照片，AI 会自动识别营养数据。</p>
 
           <div class="label-upload-area">
             <label class="label-upload-box label-upload-box-lg" for="labelImageInput">
@@ -440,7 +522,13 @@
       <h3 class="section-title section-title-lg"><span class="section-icon">📝</span> 今日餐次记录</h3>
       <div class="empty-state" id="emptyState">
         <div class="empty-icon">🍽</div>
-        <p>还没有记录。拍一张照片，或点一下上面的常用食物吧。</p>
+        <p class="empty-title">还没有记录</p>
+        <p class="empty-sub">先用上面的 3 种方式添加一餐</p>
+        <div class="empty-actions">
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('bigPhotoInput').click()">📸 拍食物</button>
+          <button class="btn btn-secondary btn-sm" onclick="quickVoiceRecord()">🎤 输入</button>
+          <button class="btn btn-secondary btn-sm" onclick="openLabelScanner()">📷 扫营养表</button>
+        </div>
       </div>
       <div class="meal-list" id="mealList"></div>
     </div>
@@ -491,6 +579,10 @@
 
 <!-- ============ 底部免责声明 ============ -->
 <footer class="app-footer">
+  <div class="demo-banner">
+    <span class="demo-banner-icon">🏥</span>
+    <span>为老人、控糖/胃病人群、术后恢复等场景设计 · AI 自动识别食物和营养成分，生成今日建议</span>
+  </div>
   <div class="export-report-section" style="text-align:center; padding: 16px 0; border-top: 1px solid var(--border, #e0e0e0); margin-bottom: 12px;">
     <button class="btn-export-report" onclick="exportReport()" style="background:#D4875A; color:#fff; border:none; padding:12px 32px; border-radius:8px; font-size:16px; font-weight:600; cursor:pointer;">
       📄 导出饮食报告（给医生看）
@@ -528,13 +620,37 @@
   </div>
 </nav>
 
+<!-- ============ 指向型新手引导浮层 ============ -->
+<div class="onboarding-overlay" id="onboardingOverlay" style="display:none;">
+  <div class="onboarding-highlight" id="onboardingHighlight"></div>
+  <div class="onboarding-card" id="onboardingCard">
+    <div class="onboarding-card-arrow" id="onboardingArrow"></div>
+    <div class="onboarding-card-header">
+      <span class="onboarding-step-num" id="obStepNum">1</span>
+      <span class="onboarding-step-total">/ 5</span>
+      <button class="onboarding-skip" onclick="closeOnboarding()">跳过</button>
+    </div>
+    <h4 class="onboarding-card-title" id="obTitle"></h4>
+    <p class="onboarding-card-body" id="obBody"></p>
+    <div class="onboarding-card-footer">
+      <label class="onboarding-dismiss">
+        <input type="checkbox" id="obDontShow"> 不再显示
+      </label>
+      <div class="onboarding-nav-btns">
+        <button class="onboarding-btn onboarding-btn-prev" id="obPrev" onclick="onboardingPrev()">上一步</button>
+        <button class="onboarding-btn onboarding-btn-next" id="obNext" onclick="onboardingNext()">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ 脚本加载 ============ -->
 <script src="./_shared/js/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="assets/food-db.js?v=20260624m"></script>
-<script src="assets/charts.js?v=20260624m"></script>
-<script src="assets/nutrient-system.js?v=20260624m"></script>
-<script src="assets/app.js?v=20260624m"></script>
+<script src="assets/food-db.js?v=20260626ui3"></script>
+<script src="assets/charts.js?v=20260626ui3"></script>
+<script src="assets/nutrient-system.js?v=20260626ui3"></script>
+<script src="assets/app.js?v=20260626ui3"></script>
 
 <script>
 // 注册 Service Worker（PWA 离线 + 全屏 App 体验）

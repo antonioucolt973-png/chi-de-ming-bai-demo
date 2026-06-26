@@ -782,16 +782,34 @@ LABEL_NUTRIENT_ALIASES = {
     '维生素D': ('vd', 'μg'),
     '维生素e': ('ve', 'mg'),
     '维生素E': ('ve', 'mg'),
+    # 维生素K / K1 / K₁ — 全部兼容
     '维生素k': ('vk', 'μg'),
     '维生素K': ('vk', 'μg'),
+    '维生素k1': ('vk', 'μg'),
+    '维生素K1': ('vk', 'μg'),
+    '维生素k₂': ('vk', 'μg'),
+    # 维生素B1 / B₁ / VB1 / 硫胺素 — 全部兼容
     '维生素b1': ('vb1', 'mg'),
     '维生素B1': ('vb1', 'mg'),
+    'vb1': ('vb1', 'mg'),
+    'VB1': ('vb1', 'mg'),
+    '硫胺素': ('vb1', 'mg'),
+    # 维生素B2 / B₂ / VB2 / 核黄素
     '维生素b2': ('vb2', 'mg'),
     '维生素B2': ('vb2', 'mg'),
+    'vb2': ('vb2', 'mg'),
+    'VB2': ('vb2', 'mg'),
+    '核黄素': ('vb2', 'mg'),
+    # 维生素B6 / B₆ / VB6
     '维生素b6': ('vb6', 'mg'),
     '维生素B6': ('vb6', 'mg'),
+    'vb6': ('vb6', 'mg'),
+    'VB6': ('vb6', 'mg'),
+    # 维生素B12 / B₁₂ / VB12
     '维生素b12': ('vb12', 'μg'),
     '维生素B12': ('vb12', 'μg'),
+    'vb12': ('vb12', 'μg'),
+    'VB12': ('vb12', 'μg'),
     '烟酸': ('niacin', 'mg'),
     '叶酸': ('folate', 'μg'),
     '泛酸': ('pantothenic', 'mg'),
@@ -818,8 +836,16 @@ def _extract_json_object(text):
             return None
     return None
 
+_SUBSCRIPT_MAP = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+
 def _normalize_label_name(name):
-    return re.sub(r'[\s（）()\[\]：:、,，%]', '', str(name or '')).strip()
+    """Normalize nutrient name: remove spaces/punctuation, convert subscripts to regular digits."""
+    s = str(name or '').strip()
+    # Convert Unicode subscripts (₁₂₆ etc.) to regular digits
+    s = s.translate(_SUBSCRIPT_MAP)
+    # Remove spaces, brackets, colons, commas, percent signs
+    s = re.sub(r'[\s（）()\[\]：:、,，%]', '', s)
+    return s.strip()
 
 def _label_number(value):
     if isinstance(value, (int, float)):

@@ -1,7 +1,7 @@
 // 吃得明白 - Service Worker
 // PWA 离线缓存 + 全屏 App 体验
 
-var CACHE_NAME = 'chidemingbai-v8';
+var CACHE_NAME = 'chidemingbai-v9';
 var CACHE_URLS = [
   '/assets/style.css',
   '/assets/food-db.js',

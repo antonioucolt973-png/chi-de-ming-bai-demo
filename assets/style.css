@@ -685,7 +685,7 @@ body {
 #labelScanModal .profile-modal-body {
   position: relative;
   z-index: 2147483002;
-  padding-bottom: 120px;
+  padding-bottom: 140px;
   overflow-y: auto;
   max-height: calc(90vh - 130px);
 }

@@ -516,8 +516,8 @@
       }
 
       console.log('[语音] finalText=', finalText);
-      overlay.style.display = 'none';
-      processVoiceText(finalText);
+      // 不立即关闭弹窗，先显示 loading
+      processVoiceText(finalText, overlay, finishBtn, voiceStatus);
     }
 
     function cancel() {
@@ -599,16 +599,31 @@
     }
   };
 
-  function processVoiceText(text) {
+  function processVoiceText(text, overlay, finishBtn, voiceStatusEl) {
     if (!text || text.trim() === '') {
       // 不再 alert，直接返回（弹窗已处理空值情况）
       console.warn('[语音] processVoiceText 收到空文本');
       return;
     }
 
-    // 优先调用 MiMo AI 解析（更智能，能理解口语化表达）
-    var statusEl = document.getElementById('voiceStatus');
-    if (statusEl) statusEl.textContent = '🤖 MiMo AI 正在分析您说的内容...';
+    // 显示 loading 状态
+    var statusEl = voiceStatusEl || document.getElementById('voiceStatus');
+    if (statusEl) {
+      statusEl.innerHTML = '🤖 MiMo 正在解析你输入的食物，通常需要 3-10 秒，请稍等。';
+    }
+    if (finishBtn) {
+      finishBtn.textContent = '正在解析...';
+      finishBtn.disabled = true;
+      finishBtn.style.opacity = '0.7';
+      finishBtn.style.pointerEvents = 'none';
+    }
+
+    // 10 秒后提示仍在处理
+    var slowTimer = setTimeout(function() {
+      if (statusEl && finishBtn && finishBtn.disabled) {
+        statusEl.innerHTML = '解析时间稍长，仍在处理中，请不要关闭。';
+      }
+    }, 10000);
 
     fetch('/api/parse_voice', {
       method: 'POST',
@@ -617,6 +632,7 @@
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
+      clearTimeout(slowTimer);
       if (data.success && data.foods && data.foods.length > 0) {
         // MiMo 解析成功，用返回的食物数据
         var items = data.foods.map(function(f) {
@@ -647,38 +663,96 @@
             nutrition: calcNutrition(foodInfo, multiplier)
           };
         });
-        showResult(items, '✅ MiMo AI 已解析文字输入（' + items.length + '个食物），确认后记录');
+        // 恢复按钮
+        if (finishBtn) {
+          finishBtn.textContent = '✓ 完成';
+          finishBtn.disabled = false;
+          finishBtn.style.opacity = '';
+          finishBtn.style.pointerEvents = '';
+        }
+        // 关闭弹窗并显示结果
+        if (overlay) overlay.style.display = 'none';
+        showResult(items, '✅ 已识别到 ' + items.length + ' 个食物，请确认记录');
         document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        if (statusEl) statusEl.textContent = '✅ MiMo AI 识别成功';
       } else {
         // MiMo 解析失败，回退到本地匹配
+        clearTimeout(slowTimer);
         console.warn('[语音] MiMo解析失败:', data.error, '，回退到本地匹配');
-        fallbackToLocalParse(text);
+        var localParsed = parseFoodInput(text);
+        if (localParsed.length > 0) {
+          var localItems = localParsed.map(function(p) {
+            return {
+              food: p.food,
+              multiplier: p.multiplier,
+              nutrition: calcNutrition(p.food, p.multiplier)
+            };
+          });
+          if (finishBtn) {
+            finishBtn.textContent = '✓ 完成';
+            finishBtn.disabled = false;
+            finishBtn.style.opacity = '';
+            finishBtn.style.pointerEvents = '';
+          }
+          if (overlay) overlay.style.display = 'none';
+          showResult(localItems, '✅ 已识别到 ' + localItems.length + ' 个食物（本地匹配），请确认记录');
+          document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          // 完全失败，在弹窗内显示错误
+          if (finishBtn) {
+            finishBtn.textContent = '✓ 完成';
+            finishBtn.disabled = false;
+            finishBtn.style.opacity = '';
+            finishBtn.style.pointerEvents = '';
+          }
+          if (statusEl) {
+            statusEl.innerHTML = '⚠️ 没有识别到食物，请换一种说法试试。<br>' +
+              '<div style="display:flex;gap:8px;margin-top:10px;">' +
+              '<button class="btn btn-primary btn-sm" onclick="document.getElementById(\'voiceManualInput\').focus()">重新输入</button>' +
+              '<button class="btn btn-secondary btn-sm" onclick="closeVoiceOverlay();openManualFoodForm()">手动添加</button>' +
+              '</div>';
+          }
+        }
       }
     })
     .catch(function(err) {
+      clearTimeout(slowTimer);
       console.warn('[语音] MiMo请求失败:', err.message, '，回退到本地匹配');
-      fallbackToLocalParse(text);
+      var localParsed = parseFoodInput(text);
+      if (localParsed.length > 0) {
+        var localItems = localParsed.map(function(p) {
+          return {
+            food: p.food,
+            multiplier: p.multiplier,
+            nutrition: calcNutrition(p.food, p.multiplier)
+          };
+        });
+        if (finishBtn) {
+          finishBtn.textContent = '✓ 完成';
+          finishBtn.disabled = false;
+          finishBtn.style.opacity = '';
+          finishBtn.style.pointerEvents = '';
+        }
+        if (overlay) overlay.style.display = 'none';
+        showResult(localItems, '✅ 已识别到 ' + localItems.length + ' 个食物（本地匹配），请确认记录');
+        document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else {
+        if (finishBtn) {
+          finishBtn.textContent = '✓ 完成';
+          finishBtn.disabled = false;
+          finishBtn.style.opacity = '';
+          finishBtn.style.pointerEvents = '';
+        }
+        if (statusEl) {
+          statusEl.innerHTML = '⚠️ 网络错误：' + err.message + '<br>请重试或手动添加。';
+        }
+      }
     });
   }
 
-  // 本地解析兜底（MiMo不可用时使用）
-  function fallbackToLocalParse(text) {
-    var parsed = parseFoodInput(text);
-    if (parsed.length > 0) {
-      var items = parsed.map(function(p) {
-        return {
-          food: p.food,
-          multiplier: p.multiplier,
-          nutrition: calcNutrition(p.food, p.multiplier)
-        };
-      });
-      showResult(items, '✅ 本地匹配完成（MiMo 不可用时备用），确认后记录');
-      document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    } else {
-      alert('没有听清楚您说的食物，您可以试试：' + text + '\n或直接点下面的常用食物');
-    }
-  }
+  window.closeVoiceOverlay = function() {
+    var ov = document.getElementById('voiceOverlay');
+    if (ov) ov.style.display = 'none';
+  };
 
   // ==================== 显示识别结果（确认区）====================
   function showResult(items, sourceMessage) {
@@ -2507,27 +2581,71 @@
         console.log('[扫描] /api/scan_label 完整返回:', JSON.stringify(data).substring(0, 500));
         console.log('[扫描] data.success:', data.success);
         console.log('[扫描] data.error:', data.error);
-        console.log('[扫描] data.raw_preview:', data.raw_preview);
+        if (data.raw_preview) {
+          console.log('[扫描] raw_preview 前500字:', String(data.raw_preview).substring(0, 500));
+        }
         if (data.success && data.label) {
           // MiMo 识别成功
           var rawText = data.label.raw_text || data.label.raw_text_llm || '';
-          console.log('[扫描] MiMo识别到文字:', rawText.substring(0, 200));
+          console.log('[扫描] MiMo识别到文字:', rawText.substring(0, 500));
           var parsed = Object.assign({}, data.label);
           if (rawText) {
             try {
               var textParsed = parseNutrientsFromText(rawText);
               Object.keys(textParsed || {}).forEach(function(key) {
-                if (parsed[key] === undefined || parsed[key] === '' || parsed[key] === null) {
-                  parsed[key] = textParsed[key];
+                // 只在后端没有返回值（undefined/null/''）时，才用文本解析结果填充
+                // 如果后端已有非0值，绝不覆盖
+                var existingVal = parsed[key];
+                var newTextVal = textParsed[key];
+                if (key === 'customNutrients') {
+                  // 合并 customNutrients，避免重复
+                  var existing = parsed.customNutrients || [];
+                  newTextVal.forEach(function(cn) {
+                    var exists = existing.some(function(e) { return e.name === cn.name; });
+                    if (!exists) existing.push(cn);
+                  });
+                  parsed.customNutrients = existing;
+                } else if (existingVal === undefined || existingVal === null || existingVal === '') {
+                  parsed[key] = newTextVal;
+                } else if (typeof existingVal === 'number' && existingVal === 0 && newTextVal > 0) {
+                  // 后端返回了0，但文本解析到了非0值，用文本解析的值
+                  parsed[key] = newTextVal;
                 }
+                // 如果后端已有非0值，不做任何覆盖
               });
             } catch(ex) { console.error('[扫描] 解析失败:', ex); }
           }
           if (data.label.name) parsed.name = data.label.name;
           if (data.label.weight) parsed.weight = data.label.weight;
           if (data.label.unit) parsed.unit = data.label.unit;
-          fillLabelScanForm(parsed);
-          updateLabelStatus('✅ 识别完成，请检查结果后保存', false);
+
+          // ====== 检查是否识别到有效数据 ======
+          var hasName = parsed.name && parsed.name.trim();
+          var standardKeys = ['cal','protein','fat','carb','fiber','na','ca','fe','zn','se','k','mg','p','cu','mn','i','va','vc','vd','ve','vk','vb1','vb2','vb6','vb12','niacin','folate','pantothenic'];
+          var hasStandardNutrient = false;
+          standardKeys.forEach(function(k) {
+            if (parsed[k] && parsed[k] > 0) hasStandardNutrient = true;
+          });
+          var hasCustom = parsed.customNutrients && parsed.customNutrients.length > 0;
+
+          if (!hasName && !hasStandardNutrient && !hasCustom) {
+            // 没有识别到有效数据
+            fillLabelScanForm(parsed);
+            updateLabelStatus('⚠️ 未识别到有效营养数据，请换一张更清晰的图片或重试。', true);
+            // 显示重新上传和手动填写按钮
+            var errBar = document.getElementById('labelScanStatusBar');
+            if (errBar) {
+              var errActions = document.createElement('div');
+              errActions.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+              errActions.innerHTML = '<button class="btn btn-primary btn-sm" onclick="document.getElementById(\'labelImageInput\').click()">重新上传</button>' +
+                '<button class="btn btn-secondary btn-sm" onclick="closeLabelScanner();openManualFoodForm()">手动填写</button>';
+              errBar.appendChild(errActions);
+            }
+            document.getElementById('saveScannedBtn').style.display = 'none';
+          } else {
+            fillLabelScanForm(parsed);
+            updateLabelStatus('✅ 识别完成，请检查结果后保存', false);
+          }
         } else if (data.success && data.task_id) {
           // 图像理解降级模式，需要轮询
           console.log('[扫描] 进入图像理解降级模式，task_id:', data.task_id);
@@ -2697,6 +2815,10 @@
     var nameMatch = text.match(/(?:产品名称|产品名|品名|名称)[：:]\s*([^\n,，。]+)/);
     if (nameMatch) label.name = nameMatch[1].trim();
 
+    // 将 Unicode 下标转换为常规数字
+    var subMap = {'₀':'0','₁':'1','₂':'2','₃':'3','₄':'4','₅':'5','₆':'6','₇':'7','₈':'8','₉':'9'};
+    text = text.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, function(c) { return subMap[c] || c; });
+
     var aliases = {
       '能量': 'cal', '热量': 'cal',
       '蛋白质': 'protein',
@@ -2705,8 +2827,16 @@
       '膳食纤维': 'fiber',
       '钠': 'na', '钙': 'ca', '铁': 'fe', '锌': 'zn', '硒': 'se', '钾': 'k',
       '镁': 'mg', '磷': 'p', '铜': 'cu', '锰': 'mn', '碘': 'i',
-      '维生素A': 'va', '维生素C': 'vc', '维生素D': 'vd', '维生素E': 've', '维生素K': 'vk',
-      '维生素B1': 'vb1', '维生素B2': 'vb2', '维生素B6': 'vb6', '维生素B12': 'vb12',
+      '氯': null, // 氯不是标准字段，放入 customNutrients
+      '维生素A': 'va', '维生素a': 'va',
+      '维生素C': 'vc', '维生素c': 'vc',
+      '维生素D': 'vd', '维生素d': 'vd',
+      '维生素E': 've', '维生素e': 've',
+      '维生素K': 'vk', '维生素k': 'vk', '维生素K1': 'vk', '维生素k1': 'vk',
+      '维生素B1': 'vb1', '维生素b1': 'vb1', 'VB1': 'vb1', '硫胺素': 'vb1',
+      '维生素B2': 'vb2', '维生素b2': 'vb2', 'VB2': 'vb2', '核黄素': 'vb2',
+      '维生素B6': 'vb6', '维生素b6': 'vb6', 'VB6': 'vb6',
+      '维生素B12': 'vb12', '维生素b12': 'vb12', 'VB12': 'vb12',
       '烟酸': 'niacin', '叶酸': 'folate', '泛酸': 'pantothenic'
     };
     var lines = text.split(/\r?\n|；|;/).map(function(line) { return line.trim(); }).filter(Boolean);
@@ -2716,11 +2846,12 @@
       var name = m[1].trim();
       var value = parseFloat(m[2]);
       var unit = m[3] || '';
+      // 尝试精确匹配，再尝试去空格匹配
       var key = aliases[name] || aliases[name.replace(/\s+/g, '')];
       if (key) {
         if (key === 'cal' && (/kJ|千焦/i).test(unit)) value = Math.round(value / 4.184 * 10) / 10;
         label[key] = value;
-      } else if (!/产品|营养|其他/.test(name)) {
+      } else if (!/产品|营养|其他|供能比/.test(name)) {
         label.customNutrients.push({ name: name, value: value, unit: unit || 'mg' });
       }
     });

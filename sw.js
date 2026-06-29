@@ -1,7 +1,7 @@
 // 吃得明白 - Service Worker
 // PWA 离线缓存 + 全屏 App 体验
 
-var CACHE_NAME = 'chidemingbai-v15';
+var CACHE_NAME = 'chidemingbai-v17';
 var CACHE_URLS = [
   '/assets/style.css',
   '/assets/food-db.js',
@@ -45,10 +45,14 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // HTML 和 JS 请求：始终走网络（开发阶段不缓存，确保最新代码）
+  // HTML、JS 和 CSS 请求：始终走网络（确保最新代码）
   if (url.pathname === '/' ||
       url.pathname === '/index.html' ||
-      url.pathname === '/assets/app.js') {
+      url.pathname === '/assets/app.js' ||
+      url.pathname === '/assets/style.css' ||
+      url.pathname === '/assets/food-db.js' ||
+      url.pathname === '/assets/charts.js' ||
+      url.pathname === '/assets/nutrient-system.js') {
     event.respondWith(
       fetch(event.request).then(function(resp) {
         return resp;

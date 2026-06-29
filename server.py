@@ -415,6 +415,11 @@ def match_food_from_text(food_names_text):
                     is_overlapped = True
                     break
             if not is_overlapped:
+                # 检查是否有食物类型后缀差异
+                # 例如 "酱汁鸡翅" 包含 "鸡翅"，但剩余 "酱汁" 含 "酱" 后缀，不应匹配
+                if _has_food_type_suffix(food_names_text, food_name):
+                    idx = food_names_text.find(food_name, idx + 1)
+                    continue
                 matched.append(_build_food_item(food_name, FOOD_DB[food_name]))
                 found_names.add(food_name)
                 matched_ranges.append([idx, end_idx])
@@ -510,6 +515,22 @@ def _dedupe_food_names(names, limit=8):
     return deduped
 
 
+_FOOD_TYPE_SUFFIXES = ('酱', '油', '汁', '粉', '奶', '粥', '糖', '盐', '醋', '茶', '酒',
+                        '糕', '饼', '丸', '卷', '条', '丝', '丁', '块', '泥', '糊', '冻',
+                        '干', '皮', '籽', '仁', '叶', '花', '根', '茎', '汤', '面', '饭',
+                        '包', '派', '酥', '棒', '片')
+
+
+def _has_food_type_suffix(longer, shorter):
+    """检查 longer 包含 shorter 时，剩余部分是否包含食物类型后缀。
+    例如 '番茄酱' 包含 '番茄'，剩余 '酱' 是后缀，返回 True（不能模糊匹配）。"""
+    idx = longer.find(shorter)
+    if idx < 0:
+        return False
+    remaining = longer[:idx] + longer[idx + len(shorter):]
+    return any(s in remaining for s in _FOOD_TYPE_SUFFIXES)
+
+
 def _find_mimo_nutrition(mimo_nutrition, name):
     """MiMo 营养查询返回名可能略有差异，做一次宽松匹配。"""
     if not mimo_nutrition:
@@ -519,7 +540,12 @@ def _find_mimo_nutrition(mimo_nutrition, name):
     target_key = _food_key(name)
     for item_name, item in mimo_nutrition.items():
         item_key = _food_key(item_name)
-        if item_key == target_key or item_key in target_key or target_key in item_key:
+        if item_key == target_key:
+            return item
+        # 宽松匹配：仅当不存在食物类型后缀差异时才匹配
+        if (item_key in target_key or target_key in item_key):
+            if _has_food_type_suffix(target_key, item_key) or _has_food_type_suffix(item_key, target_key):
+                continue
             return item
     return None
 
@@ -645,51 +671,163 @@ def get_food_nutrition_from_mimo(food_names):
 
 # ============ 食物识别（MiMo 多模态） ============
 
+def _try_parse_food_json(text):
+    """
+    尝试从 MiMo 返回文本中解析 JSON 食物列表（含坐标）。
+    成功返回 list of dict，失败返回 None。
+    """
+    import json as _json
+    text = text.strip()
+
+    # 去除可能的 markdown 代码块包裹
+    if text.startswith('```'):
+        lines = text.split('\n')
+        # 去掉首行 ```json 或 ``` 和末行 ```
+        inner = []
+        in_block = False
+        for line in lines:
+            if line.strip().startswith('```') and not in_block:
+                in_block = True
+                continue
+            if line.strip() == '```' and in_block:
+                in_block = False
+                continue
+            if in_block:
+                inner.append(line)
+        text = '\n'.join(inner).strip()
+    else:
+        # 尝试提取 JSON 片段
+        start = text.find('{')
+        end = text.rfind('}')
+        if start >= 0 and end > start:
+            text = text[start:end + 1]
+
+    try:
+        data = _json.loads(text)
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    foods = data.get('foods')
+    if not isinstance(foods, list) or len(foods) == 0:
+        return None
+
+    parsed = []
+    for item in foods:
+        if not isinstance(item, dict):
+            continue
+        name = item.get('name', '')
+        if not isinstance(name, str) or not name.strip():
+            continue
+        name = name.strip()
+        if name in ('无', 'none', 'None', ''):
+            continue
+
+        entry = {'name': name}
+        # weight
+        w = item.get('weight')
+        if w is not None:
+            try:
+                entry['weight'] = max(1, float(w))
+            except (TypeError, ValueError):
+                pass
+        # center_x / center_y 严格校验：必须是 0~1 之间的数字
+        for coord_key in ('center_x', 'center_y'):
+            cv = item.get(coord_key)
+            if cv is None:
+                continue
+            try:
+                cv = float(cv)
+            except (TypeError, ValueError):
+                continue
+            # 允许极小的容差，超出 0~1 范围直接丢弃
+            if cv < 0 or cv > 1:
+                continue
+            entry[coord_key] = cv
+        parsed.append(entry)
+
+    if not parsed:
+        return None
+    return parsed
+
+
+def _validate_coords(foods_list):
+    """检查食物列表中是否所有项都有有效坐标。"""
+    if not foods_list:
+        return False
+    for f in foods_list:
+        if 'center_x' not in f or 'center_y' not in f:
+            return False
+        if not (0 <= f['center_x'] <= 1 and 0 <= f['center_y'] <= 1):
+            return False
+    return len(foods_list) >= 1
+
+
 def recognize_by_mimo(image_base64):
     """
     用 MiMo-V2.5 识别图片中的食物。
     同步调用，1-3秒返回结果。
 
     流程：
-      1. 发送图片 + 提示词给 MiMo
-      2. MiMo 返回食物名称列表
-      3. 逐个匹配本地食物数据库
-      4. 本地没有的，批量调用 MiMo 查询营养
-      5. 仍查不到的，用基础估算
-      6. 最多返回 8 个 foods
+      1. 发送图片 + JSON 提示词给 MiMo（尝试获取名称+重量+坐标）
+      2. 如果 JSON 解析成功，提取食物名称和坐标
+      3. 如果 JSON 解析失败，降级为逗号分隔文本模式
+      4. 逐个匹配本地食物数据库
+      5. 本地没有的，批量调用 MiMo 查询营养
+      6. 仍查不到的，用基础估算
+      7. 最多返回 8 个 foods，每个 food 可能含 center_x/center_y
     """
-    # 不再提前剥离 data:image 前缀，让 mimo_chat_with_image 统一处理
-
-    prompt = (
-        "请识别图片中所有可见的食物、食材、调料和饮品。"
-        "包括配菜、谷物、豆类、酱料、香草、坚果、种子、主食、乳制品等。"
-        "不要只返回最大或最明显的食物，要尽量列出所有可见食材。"
-        "只返回中文名称，用逗号分隔，不要加其他描述。"
-        "例如：罗勒叶,鹰嘴豆,黑芝麻,橄榄,番茄,番茄酱,意面,酸奶。"
-        "如果不确定，也返回最可能的通用食材名，例如'谷物粉''酸奶/奶油''番茄酱'。"
-        "如果图片中没有食物，返回：无。"
-        "最多返回8种食物。"
+    # JSON 模式提示词：尝试同时获取名称、重量和归一化坐标
+    json_prompt = (
+        "请识别图片中所有可见的食物、食材和饮品。"
+        "返回严格的JSON格式，不要有其他文字。\n"
+        '格式：{"foods":[{"name":"食物中文名","weight":150,"center_x":0.25,"center_y":0.55}]}\n'
+        "字段说明：\n"
+        "  name: 食物中文名称\n"
+        "  weight: 估算重量（克）\n"
+        "  center_x: 食物中心在图片中的水平位置，0.0=最左，1.0=最右\n"
+        "  center_y: 食物中心在图片中的垂直位置，0.0=最上，1.0=最下\n"
+        "最多返回8个食物。如果图片中没有食物，返回：{\"foods\":[]}"
     )
 
-    result = mimo_chat_with_image(image_base64, prompt, max_tokens=4096, temperature=0.1)
+    result = mimo_chat_with_image(image_base64, json_prompt, max_tokens=4096, temperature=0.1)
 
     if not result.get('success'):
         return result
 
     ai_text = result['text']
-    print(f"[MiMo] raw_text={ai_text}", flush=True)
+    print(f"[MiMo] raw_text={ai_text[:300]}", flush=True)
 
-    if '无' in ai_text or not ai_text.strip():
-        return {'success': False, 'error': '图片中未识别到食物'}
+    food_names = []
+    food_coords = {}  # name -> {'center_x': float, 'center_y': float}
+    coords_mode = False
 
-    # 清理 AI 返回的文本，提取食物名称
-    parts = re.split(r'[,，、\n]+', ai_text)
-    food_names = _dedupe_food_names(parts, limit=8)
+    # 尝试 JSON 解析
+    parsed_foods = _try_parse_food_json(ai_text)
+    if parsed_foods:
+        coords_mode = True
+        print(f"[MiMo] JSON解析成功，共{len(parsed_foods)}个食物", flush=True)
+        for item in parsed_foods:
+            food_names.append(item['name'])
+            if 'center_x' in item and 'center_y' in item:
+                food_coords[item['name']] = {
+                    'center_x': item['center_x'],
+                    'center_y': item['center_y']
+                }
+                print(f"[MiMo] 坐标: {item['name']} -> ({item['center_x']:.2f}, {item['center_y']:.2f})", flush=True)
+    else:
+        # JSON 解析失败，降级为逗号分隔模式
+        print("[MiMo] JSON解析失败，降级为文本模式", flush=True)
+        if '无' in ai_text or not ai_text.strip():
+            return {'success': False, 'error': '图片中未识别到食物'}
+        parts = re.split(r'[,，、\n]+', ai_text)
+        food_names = _dedupe_food_names(parts, limit=8)
 
     if not food_names:
         return {'success': False, 'error': '无法解析识别结果：' + ai_text[:50]}
 
-    print(f"[MiMo] food_names={food_names}", flush=True)
+    print(f"[MiMo] food_names={food_names}, coords_mode={coords_mode}", flush=True)
 
     # 逐个匹配数据库：本地匹配的用本地，未匹配的收集起来
     matched_foods = []
@@ -740,14 +878,33 @@ def recognize_by_mimo(image_base64):
     # 最多返回 8 个
     matched_foods = matched_foods[:8]
 
-    print(f"[MiMo] 最终返回foods={len(matched_foods)}个: {[f['name'] for f in matched_foods]}", flush=True)
+    # 将坐标合并到最终食物项（如果 JSON 模式成功获取了坐标）
+    if food_coords:
+        for food in matched_foods:
+            fname = food.get('name', '')
+            # 精确匹配
+            if fname in food_coords:
+                food['center_x'] = food_coords[fname]['center_x']
+                food['center_y'] = food_coords[fname]['center_y']
+                continue
+            # 模糊匹配（去除空格后比较）
+            for coord_name, coord_val in food_coords.items():
+                if coord_name.replace(' ', '') == fname.replace(' ', ''):
+                    food['center_x'] = coord_val['center_x']
+                    food['center_y'] = coord_val['center_y']
+                    break
+
+    coords_count = sum(1 for f in matched_foods if 'center_x' in f)
+    print(f"[MiMo] 最终返回foods={len(matched_foods)}个, 含坐标={coords_count}个: {[f['name'] for f in matched_foods]}", flush=True)
 
     if matched_foods:
         return {
             'success': True,
             'foods': matched_foods,
             'source': 'mimo',
-            'raw_text': ai_text
+            'raw_text': ai_text,
+            'coords_mode': coords_mode,
+            'coords_count': coords_count
         }
     else:
         return {'success': False, 'error': '未能匹配任何食物'}
@@ -883,12 +1040,19 @@ def _build_label_from_mimo_json(data, raw_text):
         'raw_text': raw_text,
         'raw_text_llm': raw_text,
     }
-    nutrients = data.get('nutrients') or data.get('items') or []
+    # 兼容 nutrients 为数组或对象
+    nutrients = data.get('nutrients') or data.get('items') or data.get('nutrition') or []
     if isinstance(nutrients, dict):
+        # nutrients 是对象格式：{"能量": 1801, "蛋白质": 15.9, ...}
         nutrients = [{'name': k, 'value': v} for k, v in nutrients.items()]
+    elif not isinstance(nutrients, list):
+        nutrients = []
     for item in nutrients:
         if isinstance(item, dict):
             _merge_label_nutrient(label, item)
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            # 兼容数组格式：["能量", 1801, "kJ"]
+            _merge_label_nutrient(label, {'name': item[0], 'value': item[1], 'unit': item[2] if len(item) > 2 else ''})
     return label
 
 def scan_label_by_mimo(image_base64):
@@ -941,7 +1105,21 @@ def scan_label_by_mimo(image_base64):
                 'raw_preview': raw_text[:200]
             }
         label = _build_label_from_mimo_json(parsed_json, raw_text)
-        return {'success': True, 'label': label, 'source': 'mimo'}
+        # 验证：label 必须包含产品名或至少一个有效营养素
+        has_name = bool(label.get('name'))
+        has_nutrient = any(label.get(k) and label[k] > 0 for k in
+                          ['cal','protein','fat','carb','fiber','na','ca','fe','zn','se','k','mg','p','cu','mn','i',
+                           'va','vc','vd','ve','vk','vb1','vb2','vb6','vb12','niacin','folate','pantothenic'])
+        has_custom = bool(label.get('customNutrients') and len(label['customNutrients']) > 0)
+        if has_name or has_nutrient or has_custom:
+            return {'success': True, 'label': label, 'source': 'mimo'}
+        else:
+            # JSON 解析成功但没有任何有效营养数据
+            print(f"[MiMo] JSON解析成功但无有效营养数据: name={label.get('name')}, nutrients字段数={len(parsed_json.get('nutrients', []))}", flush=True)
+            # 继续走兜底逻辑
+    else:
+        # JSON 解析失败，走兜底逻辑
+        print(f"[MiMo] JSON解析失败，raw_text前200字: {raw_text[:200]}", flush=True)
 
     # 检查是否识别到营养成分表
     if '未识别到营养成分表' in raw_text:
@@ -957,15 +1135,40 @@ def scan_label_by_mimo(image_base64):
     product_name = name_match.group(1).strip() if name_match else ''
 
     # 兜底：只要 MiMo 返回了文字，就交给前端文本解析。
-    return {
-        'success': True,
-        'label': {
-            'name': product_name,
-            'raw_text': raw_text,
-            'raw_text_llm': raw_text
-        },
-        'source': 'mimo'
+    # 但必须验证解析结果确实包含产品名或至少一个有效营养素
+    fallback_label = {
+        'name': product_name,
+        'raw_text': raw_text,
+        'raw_text_llm': raw_text
     }
+
+    # 验证：即使通过文本解析，也必须包含产品名或至少一个有效营养素
+    has_fallback_name = bool(product_name)
+    # 检查 raw_text 是否包含营养相关关键词
+    nutrient_keywords = ['能量', '热量', '蛋白质', '脂肪', '碳水', '纤维', '钠', '钙', '铁', '锌',
+                          '维生素', '营养', 'kJ', 'kcal', 'g', 'mg', '每100']
+    has_nutrient_text = any(kw in raw_text for kw in nutrient_keywords)
+
+    if has_fallback_name or has_nutrient_text:
+        return {
+            'success': True,
+            'label': fallback_label,
+            'source': 'mimo'
+        }
+    else:
+        # MiMo 返回了文字但内容不包含任何营养信息
+        print(f"[MiMo] 兜底验证失败：raw_text 不含营养相关内容（长度={len(raw_text)}）", flush=True)
+        return {
+            'success': False,
+            'error': 'MiMo 返回了文字但未包含有效营养信息，可能是图片不是营养成分表',
+            'source': 'mimo',
+            'raw_preview': raw_text[:200],
+            'diag': {
+                'raw_text_length': len(raw_text),
+                'has_name': has_fallback_name,
+                'has_nutrient_keyword': has_nutrient_text
+            }
+        }
 
 
 # ============ AI 营养建议（新增能力） ============
@@ -1193,6 +1396,8 @@ def _bg_recognize_food(task_id, image_b64, result_path):
                 'source': 'mimo',
                 'foods': mimo_result['foods'],
                 'raw_text': mimo_result.get('raw_text', ''),
+                'coords_mode': mimo_result.get('coords_mode', False),
+                'coords_count': mimo_result.get('coords_count', 0),
                 'timestamp': time.time()
             }
             with open(result_path, 'w', encoding='utf-8') as f:

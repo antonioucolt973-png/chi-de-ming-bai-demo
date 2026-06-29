@@ -81,18 +81,37 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-width: 0;
 }
-.logo-icon { font-size: 1.4rem; }
+.logo-icon { font-size: 1.4rem; flex-shrink: 0; }
 .logo-text {
   font-size: 1.2rem;
   font-weight: 700;
   color: var(--primary);
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.profile-btn {
+  min-width: 0;
+  overflow: hidden;
+}
+.profile-btn #profileSummary {
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
 }
 .date-display {
   font-size: 0.85rem;

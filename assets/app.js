@@ -76,8 +76,26 @@
           // 趋势图
           resizeTrendCharts();
         }
+        // 引导进行中时重新定位卡片和高亮
+        var obOverlay = document.getElementById('onboardingOverlay');
+        if (obOverlay && obOverlay.style.display !== 'none' && typeof onboardingIndex !== 'undefined') {
+          showOnboardingStep();
+        }
       }, 200);
     });
+
+    // 手机地址栏高度变化时重新定位引导
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', function() {
+        var obOverlay = document.getElementById('onboardingOverlay');
+        if (obOverlay && obOverlay.style.display !== 'none' && typeof onboardingIndex !== 'undefined') {
+          if (_resizeTimer) clearTimeout(_resizeTimer);
+          _resizeTimer = setTimeout(function() {
+            showOnboardingStep();
+          }, 200);
+        }
+      });
+    }
 
     // 如果用户之前关闭过引导条，不再显示
     if (localStorage.getItem('guideDismissed') === '1') {
@@ -2145,6 +2163,9 @@
 
     // 等滚动完成后再定位
     setTimeout(function() {
+      // 重新获取目标元素位置（scrollIntoView 后位置可能已变化）
+      try { targetEl = step.target(); } catch(e) {}
+      if (!targetEl) return;
       var rect = targetEl.getBoundingClientRect();
       var padding = 8;
       var winW = window.innerWidth;
@@ -2169,8 +2190,34 @@
 
       // 定位卡片
       var cardW = isMobile ? Math.min(380, winW - 24) : 380;
-      var cardH = 240;
       var cardTop, cardLeft;
+
+      // 先更新卡片内容，再获取实际高度
+      document.getElementById('obStepNum').textContent = onboardingIndex + 1;
+      document.getElementById('obTitle').textContent = step.title;
+      document.getElementById('obBody').textContent = step.body;
+
+      // 更新按钮
+      document.getElementById('obPrev').style.display = onboardingIndex > 0 ? 'inline-flex' : 'none';
+      var nextBtn = document.getElementById('obNext');
+      if (onboardingIndex === onboardingSteps.length - 1) {
+        nextBtn.textContent = '完成';
+      } else {
+        nextBtn.textContent = '下一步';
+      }
+
+      // 重置箭头样式，避免继承上一步的 border
+      arrow.style.cssText = '';
+      arrow.style.position = 'absolute';
+      arrow.style.width = '0';
+      arrow.style.height = '0';
+      arrow.style.border = '8px solid transparent';
+
+      // 获取卡片实际高度（不再写死 240）
+      card.style.visibility = 'hidden';
+      card.style.display = 'block';
+      var cardH = card.getBoundingClientRect().height || 240;
+      card.style.visibility = 'visible';
 
       if (!isMobile) {
         // 桌面端：卡片在目标右侧或下方
@@ -2190,31 +2237,34 @@
           arrow.style.borderLeft = 'none';
         }
       } else {
-        // 移动端：默认卡片在底部，但如果高亮按钮也在底部则放顶部，避免遮挡
-        var btnBottom = rect.bottom;
-        var cardTopDefault = winH - cardH - 12;
-        // 如果按钮底部位于屏幕下半部分（超过55%），卡片放顶部
-        if (btnBottom > winH * 0.55) {
-          // 高亮按钮在底部区域，卡片放顶部
+        // 移动端：考虑 visual viewport（地址栏高度变化）
+        var viewport = window.visualViewport || { height: winH, offsetTop: 0 };
+        var effectiveH = viewport.height;
+        var gap = 16;
+        var cardTopAboveHighlight = hlTop - cardH - gap;
+
+        if (cardTopAboveHighlight >= 12) {
+          // 卡片放在高亮区域正上方，箭头朝下指向高亮
           cardLeft = 12;
-          cardTop = 12;
-          arrow.style.left = (Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2)) - 20) + 'px';
+          cardTop = cardTopAboveHighlight;
+          var arrowX = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
+          arrow.style.left = (arrowX - cardLeft - 8) + 'px';
           arrow.style.top = cardH - 8 + 'px';
           arrow.style.borderTop = 'none';
           arrow.style.borderLeft = 'none';
         } else {
+          // 上方空间不够，卡片放屏幕底部，箭头朝上指向高亮
           cardLeft = 12;
-          cardTop = cardTopDefault;
-          // 箭头指向高亮区域
-          var arrowX = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
-          arrow.style.left = (arrowX - cardLeft - 8) + 'px';
+          cardTop = effectiveH - cardH - 12;
+          var arrowX2 = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
+          arrow.style.left = (arrowX2 - cardLeft - 8) + 'px';
           arrow.style.top = '-8px';
           arrow.style.borderBottom = 'none';
           arrow.style.borderLeft = 'none';
         }
       }
 
-      // 边界检查
+      // 边界检查：确保卡片完整处于视口内
       if (cardTop + cardH > winH) cardTop = winH - cardH - 12;
       if (cardTop < 12) cardTop = 12;
       if (cardLeft + cardW > winW - 12) cardLeft = winW - cardW - 12;
@@ -2225,21 +2275,7 @@
       card.style.width = cardW + 'px';
 
       overlay.style.display = 'block';
-    }, isMobile ? 500 : 300);
-
-    // 更新卡片内容
-    document.getElementById('obStepNum').textContent = onboardingIndex + 1;
-    document.getElementById('obTitle').textContent = step.title;
-    document.getElementById('obBody').textContent = step.body;
-
-    // 更新按钮
-    document.getElementById('obPrev').style.display = onboardingIndex > 0 ? 'inline-flex' : 'none';
-    var nextBtn = document.getElementById('obNext');
-    if (onboardingIndex === onboardingSteps.length - 1) {
-      nextBtn.textContent = '完成';
-    } else {
-      nextBtn.textContent = '下一步';
-    }
+    }, isMobile ? 800 : 300);
   }
 
   window.onboardingNext = function() {
@@ -3176,22 +3212,28 @@
     };
     img.onload = function() {
       // 营养成分表是小字图片，需要高清晰度
-      // 最大宽度1600px，JPEG质量0.92，保留文字清晰度
-      var maxW = 1600;
-      var scale = Math.min(1, maxW / img.width);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      var compressedBase64 = canvas.toDataURL('image/jpeg', 0.92);
+      // 限制最长边（兼容手机竖拍照片），保留文字清晰度
+      var maxDim = 1600;
+      var longestEdge = Math.max(img.width, img.height);
+      var scale = Math.min(1, maxDim / longestEdge);
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      try {
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('canvas getContext 返回 null');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        var compressedBase64 = canvas.toDataURL('image/jpeg', 0.92);
+        if (!compressedBase64 || compressedBase64.length < 100) {
+          throw new Error('canvas toDataURL 返回空数据');
+        }
 
-      console.log('[扫描] 压缩后大小:', Math.round(compressedBase64.length * 0.75 / 1024) + 'KB',
-                  '尺寸:', canvas.width + 'x' + canvas.height, '质量: 0.92');
+        console.log('[扫描] 压缩后大小:', Math.round(compressedBase64.length * 0.75 / 1024) + 'KB',
+                    '尺寸:', canvas.width + 'x' + canvas.height, '质量: 0.92');
 
-      // ====== 优先走 MiMo AI（后端），Tesseract作为备用 ======
-      updateLabelStatus('🔍 MiMo AI 正在识别表格文字...（营养表字多，可能需要 20-60 秒，请稍等）', false);
+        // ====== 优先走 MiMo AI（后端），Tesseract作为备用 ======
+        updateLabelStatus('🔍 MiMo AI 正在识别表格文字...（营养表字多，可能需要 20-60 秒，请稍等）', false);
 
-      fetch('/api/scan_label', {
+        fetch('/api/scan_label', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: compressedBase64 })
@@ -3295,6 +3337,32 @@
         console.error('[扫描] MiMo请求失败:', err.message, '，尝试Tesseract备用');
         tryTesseractFallback(compressedBase64);
       });
+      } catch(canvasErr) {
+        console.error('[扫描] 图片处理失败:', canvasErr.message);
+        updateLabelStatus('⚠️ 图片处理失败：' + canvasErr.message + '。请换一张 JPEG/PNG 格式的图片重试，或手动填写。', true);
+        var errBar2 = document.getElementById('labelScanStatusBar');
+        if (errBar2) {
+          var errActions2 = document.createElement('div');
+          errActions2.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+          errActions2.innerHTML = '<button class="btn btn-primary btn-sm" onclick="document.getElementById(\'labelImageInput\').click()">重新上传</button>' +
+            '<button class="btn btn-secondary btn-sm" onclick="closeLabelScanner();openManualFoodForm()">手动填写</button>';
+          errBar2.appendChild(errActions2);
+        }
+        document.getElementById('saveScannedBtn').style.display = 'none';
+      }
+    };
+    img.onerror = function() {
+      console.error('[扫描] 图片加载失败，可能是格式不支持');
+      updateLabelStatus('⚠️ 图片加载失败，可能是格式不支持或图片损坏。请换一张 JPEG/PNG 格式的清晰图片重试。', true);
+      var errBar3 = document.getElementById('labelScanStatusBar');
+      if (errBar3) {
+        var errActions3 = document.createElement('div');
+        errActions3.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+        errActions3.innerHTML = '<button class="btn btn-primary btn-sm" onclick="document.getElementById(\'labelImageInput\').click()">重新上传</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="closeLabelScanner();openManualFoodForm()">手动填写</button>';
+        errBar3.appendChild(errActions3);
+      }
+      document.getElementById('saveScannedBtn').style.display = 'none';
     };
     reader.readAsDataURL(file);
     event.target.value = '';

@@ -19,6 +19,9 @@
     scannedIcon: '🍚'
   };
 
+  // ==================== 最近记录展开状态 ====================
+  var quickFoodsExpanded = false;
+
   // ==================== 常用食物（一键记录）====================
   var QUICK_FOODS = [
     { icon: '🍚', name: '一碗米饭', keyword: '白米饭', multiplier: 1 },
@@ -60,6 +63,21 @@
     renderAll();
     checkBaiduAIStatus();
     initBottomNav();
+
+    // 全局 resize：所有 ECharts 实例跟随窗口变化
+    var _resizeTimer = null;
+    window.addEventListener('resize', function() {
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(function() {
+        if (typeof echarts !== 'undefined') {
+          // 营养配比图（charts.js 已注册，但保险起见也处理）
+          var macroEl = document.getElementById('chart-macro');
+          if (macroEl) { var inst = echarts.getInstanceByDom(macroEl); if (inst) inst.resize(); }
+          // 趋势图
+          resizeTrendCharts();
+        }
+      }, 200);
+    });
 
     // 如果用户之前关闭过引导条，不再显示
     if (localStorage.getItem('guideDismissed') === '1') {
@@ -106,8 +124,7 @@
 
     var sections = {
       'top': 0,
-      'summary': document.getElementById('todaySummary') || document.querySelector('.today-summary'),
-      'records': document.getElementById('mealRecords') || document.querySelector('.meal-records'),
+      'records': document.querySelector('.meal-records'),
       'trend': document.getElementById('trendSection') || document.querySelector('.trend-card')
     };
 
@@ -148,10 +165,10 @@
           } else {
             text.textContent = 'AI助手识别模式（未配置MiMo API）';
             badge.style.display = 'inline-flex';
-            badge.style.background = '#fff3e0';
-            badge.style.borderColor = '#ff9800';
-            badge.style.color = '#e65100';
-            badge.querySelector('.badge-dot').style.background = '#ff9800';
+            badge.style.background = '#FDF6E8';
+            badge.style.borderColor = '#E8B44C';
+            badge.style.color = '#8A6B1F';
+            badge.querySelector('.badge-dot').style.background = '#E8B44C';
           }
         }
       })
@@ -176,7 +193,8 @@
     if (!grid) return;
     grid.innerHTML = '';
 
-    QUICK_FOODS.forEach(function(food) {
+    var showCount = quickFoodsExpanded ? QUICK_FOODS.length : 4;
+    QUICK_FOODS.slice(0, showCount).forEach(function(food) {
       var btn = document.createElement('button');
       btn.className = 'quick-food-btn';
       btn.innerHTML =
@@ -185,6 +203,18 @@
       btn.onclick = function() { recordByKeyword(food.keyword, food.multiplier); };
       grid.appendChild(btn);
     });
+
+    // 查看全部 / 收起
+    if (QUICK_FOODS.length > 4) {
+      var toggle = document.createElement('button');
+      toggle.className = 'quick-food-toggle';
+      toggle.textContent = quickFoodsExpanded ? '收起' : '查看全部';
+      toggle.onclick = function() {
+        quickFoodsExpanded = !quickFoodsExpanded;
+        renderQuickFoods();
+      };
+      grid.appendChild(toggle);
+    }
   }
 
   // 一键记录
@@ -229,12 +259,47 @@
     var file = event.target.files[0];
     if (!file) return;
 
+    // 立即用 URL.createObjectURL 预览真实照片（不等压缩完成）
+    var objectUrl = URL.createObjectURL(file);
+    var vfEmpty = document.getElementById('vfEmpty');
+    var vfActive = document.getElementById('vfActive');
+    var vfPhoto = document.getElementById('vfPhoto');
+    var vfScanLine = document.getElementById('vfScanLine');
+    var vfStatusBadge = document.getElementById('vfStatusBadge');
+
+    if (vfEmpty) vfEmpty.style.display = 'none';
+    if (vfActive) vfActive.classList.add('show');
+    if (vfPhoto) vfPhoto.src = objectUrl;
+    if (vfScanLine) vfScanLine.classList.add('active');
+    if (vfStatusBadge) {
+      vfStatusBadge.className = 'vf-status-badge scanning';
+      vfStatusBadge.textContent = '正在识别...';
+    }
+
+    // 更新进度步骤
+    updateVFProgressStep(1, 'done');
+    updateVFProgressStep(2, 'active');
+    updateVFProgressStep(3, 'waiting');
+    updateVFProgressStep(4, 'waiting');
+
+    var vfProgressHint = document.getElementById('vfProgressHint');
+    if (vfProgressHint) vfProgressHint.textContent = '正在压缩上传...';
+    var vfProgressError = document.getElementById('vfProgressError');
+    if (vfProgressError) vfProgressError.classList.remove('show');
+
+    // 清除旧标签
+    var vfLabels = document.getElementById('vfLabels');
+    if (vfLabels) vfLabels.innerHTML = '';
+
+    // 同时用 FileReader 读取 base64 用于压缩上传
     var reader = new FileReader();
     reader.onload = function(e) {
       var base64Data = e.target.result;
+      lastPhotoDataUrl = base64Data;
 
-      // 显示进度面板
-      showPhotoProgress(base64Data);
+      // 兼容旧进度面板（隐藏的兼容元素）
+      var oldThumb = document.getElementById('progressPanelThumb');
+      if (oldThumb) oldThumb.src = base64Data;
 
       // 食物照片压缩：最大宽度1200px，质量0.85
       var foodImg = new Image();
@@ -248,31 +313,109 @@
         foodCtx.drawImage(foodImg, 0, 0, foodCanvas.width, foodCanvas.height);
         var compressedFood = foodCanvas.toDataURL('image/jpeg', 0.85);
 
-        // 更新进度：正在上传
-        showPhotoProgressUploading();
+        // 检查是否直接打开 HTML（file 协议）
+        if (window.location.protocol === 'file:') {
+          showPhotoProgressError('当前是直接打开HTML，无法使用AI识别。请运行start_demo.ps1后访问http://localhost:8080');
+          return;
+        }
 
-        fetch('/api/recognize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: compressedFood })
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-          if (data.task_id) {
-            pollWithProgress(data.task_id);
-          } else {
-            showPhotoProgressError('无法启动识别');
-          }
-        })
-        .catch(function(err) {
-          showPhotoProgressError('网络错误：' + err.message);
-        });
+        // 预检查 MiMo 是否配置
+        fetch('/api/mimo_status')
+          .then(function(res) { return res.json(); })
+          .then(function(status) {
+            if (!status.configured) {
+              showPhotoProgressError('MiMo未配置，无法进行AI识别。请先设置MIMO_API_KEY环境变量再启动服务。');
+              return;
+            }
+            // MiMo 已配置，继续上传
+            showPhotoProgressUploading();
+            fetch('/api/recognize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: compressedFood })
+            })
+            .then(function(res) {
+              if (!res.ok) {
+                return res.json().then(function(errData) {
+                  throw new Error(errData.error || errData.message || ('服务器错误 ' + res.status));
+                }).catch(function() {
+                  throw new Error('服务器错误 ' + res.status);
+                });
+              }
+              return res.json();
+            })
+            .then(function(data) {
+              if (data.task_id) {
+                pollWithProgress(data.task_id);
+              } else {
+                var errMsg = data.error || data.message || '无法启动识别';
+                showPhotoProgressError(errMsg);
+              }
+            })
+            .catch(function(err) {
+              // 不泄露 API Key，只显示网络错误信息
+              var safeMsg = err.message || '网络错误';
+              if (safeMsg.indexOf('key') >= 0 || safeMsg.indexOf('Key') >= 0 || safeMsg.indexOf('API') >= 0) {
+                safeMsg = '网络错误，请检查服务是否正常运行';
+              }
+              showPhotoProgressError(safeMsg);
+            });
+          })
+          .catch(function() {
+            // mimo_status 检查失败，继续尝试上传（不阻断）
+            showPhotoProgressUploading();
+            fetch('/api/recognize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: compressedFood })
+            })
+            .then(function(res) {
+              if (!res.ok) {
+                return res.json().then(function(errData) {
+                  throw new Error(errData.error || errData.message || ('服务器错误 ' + res.status));
+                }).catch(function() {
+                  throw new Error('服务器错误 ' + res.status);
+                });
+              }
+              return res.json();
+            })
+            .then(function(data) {
+              if (data.task_id) {
+                pollWithProgress(data.task_id);
+              } else {
+                var errMsg2 = data.error || data.message || '无法启动识别';
+                showPhotoProgressError(errMsg2);
+              }
+            })
+            .catch(function(err2) {
+              var safeMsg2 = err2.message || '网络错误';
+              if (safeMsg2.indexOf('key') >= 0 || safeMsg2.indexOf('Key') >= 0 || safeMsg2.indexOf('API') >= 0) {
+                safeMsg2 = '网络错误，请检查服务是否正常运行';
+              }
+              showPhotoProgressError(safeMsg2);
+            });
+          });
       };
       foodImg.src = base64Data;
     };
     reader.readAsDataURL(file);
     event.target.value = '';
   };
+
+  // ==================== Viewfinder 进度步骤更新 ====================
+  function updateVFProgressStep(step, status) {
+    var el = document.getElementById('vfps' + step);
+    if (!el) return;
+    el.classList.remove('done', 'active', 'error');
+    if (status !== 'waiting') el.classList.add(status);
+    var icon = el.querySelector('.vf-ps-icon');
+    if (icon) {
+      if (status === 'done') icon.textContent = '✓';
+      else if (status === 'active') icon.textContent = '●';
+      else if (status === 'error') icon.textContent = '✕';
+      else icon.textContent = '○';
+    }
+  }
 
   // 轮询：最多等60秒，让 MiMo 有足够时间识别（思考模式+图片可能需要10-30秒）
   function pollWithFastFallback(taskId, statusEl) {
@@ -290,7 +433,17 @@
       }
 
       fetch('/api/result/' + taskId)
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) {
+            return res.json().then(function(errData) {
+              throw new Error(errData.error || errData.message || ('服务器错误 ' + res.status));
+            }).catch(function(e) {
+              if (e.message) throw e;
+              throw new Error('服务器错误 ' + res.status);
+            });
+          }
+          return res.json();
+        })
         .then(function(data) {
           console.log('[食物识别] 轮询第' + pollCount + '次返回:', JSON.stringify(data).substring(0, 200));
           // 兼容两种成功格式：success:true 或 status:done
@@ -356,6 +509,9 @@
       if (f.weight && foodInfo.unitWeight) {
         multiplier = f.weight / foodInfo.unitWeight;
       }
+      // 将 API 返回的归一化坐标合并到 foodInfo 上
+      if (f.center_x !== undefined && f.center_x !== null) foodInfo.center_x = f.center_x;
+      if (f.center_y !== undefined && f.center_y !== null) foodInfo.center_y = f.center_y;
       return {
         food: foodInfo,
         multiplier: multiplier,
@@ -385,20 +541,57 @@
     }
   }
 
+  // 食物类型后缀：这些后缀表示是不同食物，不能模糊降级
+  // 例如 "番茄酱" 不能匹配成 "番茄"，"橄榄油" 不能匹配成 "橄榄"
+  var FOOD_TYPE_SUFFIXES = ['酱', '油', '汁', '粉', '奶', '粥', '糖', '盐', '醋', '茶', '酒',
+    '糕', '饼', '丸', '卷', '条', '丝', '丁', '块', '泥', '糊', '冻', '干', '皮', '籽',
+    '仁', '叶', '花', '根', '茎', '汤', '面', '饭', '包', '卷', '派', '酥', '棒', '片'];
+
+  function _hasFoodTypeSuffix(longer, shorter) {
+    // 检查 longer 包含 shorter 时，剩余部分是否包含食物类型后缀
+    var idx = longer.indexOf(shorter);
+    if (idx < 0) return false;
+    var remaining = longer.substring(0, idx) + longer.substring(idx + shorter.length);
+    for (var i = 0; i < FOOD_TYPE_SUFFIXES.length; i++) {
+      if (remaining.indexOf(FOOD_TYPE_SUFFIXES[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   function searchFoodByName(name, fallback) {
+    return _searchFoodByNameImpl(name, fallback);
+  }
+  // 暴露用于测试
+  window._testSearchFoodByName = _searchFoodByNameImpl;
+
+  function _searchFoodByNameImpl(name, fallback) {
     if (typeof FOOD_DB !== 'undefined') {
       // 1. 精确匹配（名称或 id 完全一致）
       for (var i = 0; i < FOOD_DB.length; i++) {
         if (FOOD_DB[i].name === name || (FOOD_DB[i].id && FOOD_DB[i].id === name)) return FOOD_DB[i];
       }
-      // 2. 模糊匹配（仅当名称长度 >= 2 时，避免"饭"匹配到"米饭"等过度泛化）
-      //    且模糊匹配结果名称长度不能比搜索词短太多（避免"黑橄榄"匹配到"橄榄"）
+      // 2. 别名精确匹配
+      for (var a = 0; a < FOOD_DB.length; a++) {
+        var aliases = FOOD_DB[a].aliases || FOOD_DB[a].alias;
+        if (aliases && Array.isArray(aliases)) {
+          for (var ai = 0; ai < aliases.length; ai++) {
+            if (aliases[ai] === name) return FOOD_DB[a];
+          }
+        }
+      }
+      // 3. 模糊匹配（仅当名称长度 >= 2 时）
+      //    严格限制：不能把带酱/油/汁等后缀的食物降级成原材料
       if (name && name.length >= 2) {
         for (var j = 0; j < FOOD_DB.length; j++) {
           var dbName = FOOD_DB[j].name;
+          if (dbName.length < 2) continue;
           // 只接受包含关系且长度差异不大
           if ((dbName.indexOf(name) >= 0 || name.indexOf(dbName) >= 0) &&
               Math.abs(dbName.length - name.length) <= 2) {
+            // 检查是否有食物类型后缀差异
+            if (_hasFoodTypeSuffix(name, dbName) || _hasFoodTypeSuffix(dbName, name)) {
+              continue; // 跳过：番茄酱不能匹配番茄
+            }
             return FOOD_DB[j];
           }
         }
@@ -757,54 +950,247 @@
   // ==================== 显示识别结果（确认区）====================
   function showResult(items, sourceMessage) {
     state.pendingItems = items;
+
+    // 兼容旧结果区域（隐藏的兼容元素）
     var section = document.getElementById('resultSection');
     var list = document.getElementById('resultList');
-    var title = section ? section.querySelector('.section-title') : null;
+    if (section) section.style.display = 'block';
+    if (list) list.innerHTML = '';
 
-    if (title) {
-      title.innerHTML = '<span class="section-icon">✅</span> AI 识别到以下食物 <span class="result-edit-hint">（不对可以点 × 删除）</span>';
-    }
+    // 渲染营养影像报告面板
+    renderReportPanel(items, sourceMessage);
 
-    list.innerHTML = '';
-    if (sourceMessage) {
-      var msg = document.createElement('div');
-      msg.className = 'result-source-message';
-      msg.textContent = sourceMessage;
-      list.appendChild(msg);
+    // 渲染食物标签（覆盖在照片上）
+    renderFoodLabels(items);
+
+    // 滚动到报告区域
+    var reportPanel = document.getElementById('reportPanel');
+    if (reportPanel) {
+      reportPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    items.forEach(function(item, index) {
+  }
+
+  // ==================== 渲染营养影像报告 ====================
+  function renderReportPanel(items, sourceMessage) {
+    // 动态计算总营养
+    var totalCal = 0, totalProtein = 0, totalFat = 0, totalCarb = 0, totalFiber = 0;
+    items.forEach(function(item) {
       var n = item.nutrition;
-      var div = document.createElement('div');
-      div.className = 'result-item result-item-lg';
-      div.innerHTML =
-        '<span class="result-item-icon">' + item.food.icon + '</span>' +
-        '<div class="result-item-info">' +
-          '<div class="result-item-name">' + item.food.name + '</div>' +
-          '<div class="result-item-weight">约 ' + Math.round(n.weight) + 'g · ' + n.cal + '千卡</div>' +
-          '<div class="result-item-nutrition">' +
-            '<span class="nutri-tag nutri-protein">蛋白 ' + n.protein + 'g</span>' +
-            '<span class="nutri-tag nutri-fat">脂肪 ' + n.fat + 'g</span>' +
-            '<span class="nutri-tag nutri-carb">碳水 ' + n.carb + 'g</span>' +
-            '<span class="nutri-tag nutri-fiber">纤维 ' + n.fiber + 'g</span>' +
-          '</div>' +
-          '<div class="result-item-micro">' +
-            '<span class="micro-tag">钙 ' + n.ca + 'mg</span>' +
-            '<span class="micro-tag">铁 ' + n.fe + 'mg</span>' +
-            '<span class="micro-tag">锌 ' + n.zn + 'mg</span>' +
-            '<span class="micro-tag">VA ' + n.va + 'μg</span>' +
-            '<span class="micro-tag">VC ' + n.vc + 'mg</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="result-item-controls">' +
-          '<button class="portion-btn" onclick="adjustPortion(' + index + ', -0.3)">−</button>' +
-          '<input type="number" class="portion-input" id="portion-' + index + '" value="' + Math.round(item.nutrition.weight) + '" min="1" step="5" onchange="setCustomWeight(' + index + ', this.value)" oninput="onWeightInput(' + index + ', this.value)" title="输入实际克数">g' +
-          '<button class="portion-btn" onclick="adjustPortion(' + index + ', 0.3)">+</button>' +
-        '</div>' +
-        '<button class="result-item-remove result-item-remove-lg" onclick="removeItem(' + index + ')">✕</button>';
-      list.appendChild(div);
+      totalCal += n.cal || 0;
+      totalProtein += n.protein || 0;
+      totalFat += n.fat || 0;
+      totalCarb += n.carb || 0;
+      totalFiber += n.fiber || 0;
     });
 
-    section.style.display = 'block';
+    // 热量
+    var calEl = document.getElementById('reportCal');
+    if (calEl) {
+      calEl.textContent = Math.round(totalCal);
+      calEl.classList.toggle('empty', totalCal === 0);
+    }
+    var calTargetEl = document.getElementById('reportCalTarget');
+    if (calTargetEl) {
+      var targetCal = state.userProfile ? (state.userProfile.targetCal || 1800) : 1800;
+      var pct = targetCal > 0 ? Math.round(totalCal / targetCal * 100) : 0;
+      calTargetEl.textContent = '目标 ' + targetCal + ' kcal · 已完成 ' + pct + '%';
+    }
+
+    // 报告日期
+    var dateEl = document.getElementById('reportDate');
+    if (dateEl) {
+      var now = new Date();
+      dateEl.textContent = (now.getMonth() + 1) + '.' + now.getDate() + ' ' +
+        ['日','一','二','三','四','五','六'][now.getDay()];
+    }
+
+    // 四项核心营养
+    var statsEl = document.getElementById('reportStats');
+    if (statsEl) {
+      var targetProtein = state.userProfile ? (state.userProfile.targetProtein || 60) : 60;
+      var targetFat = state.userProfile ? (state.userProfile.targetFat || 55) : 55;
+      var targetCarb = state.userProfile ? (state.userProfile.targetCarb || 240) : 240;
+      var targetFiber = state.userProfile ? (state.userProfile.targetFiber || 25) : 25;
+
+      var stats = [
+        { label: '蛋白质', value: Math.round(totalProtein), unit: 'g', target: targetProtein, key: 'protein' },
+        { label: '脂肪', value: Math.round(totalFat), unit: 'g', target: targetFat, key: 'fat' },
+        { label: '碳水化合物', value: Math.round(totalCarb), unit: 'g', target: targetCarb, key: 'carb' },
+        { label: '膳食纤维', value: Math.round(totalFiber), unit: 'g', target: targetFiber, key: 'fiber' }
+      ];
+
+      statsEl.innerHTML = stats.map(function(s) {
+        var pct = s.target > 0 ? Math.round(s.value / s.target * 100) : 0;
+        var fillClass = pct >= 100 ? 'over' : pct >= 80 ? 'good' : pct >= 50 ? '' : 'warn';
+        var badge = pct >= 80 ? '<span class="report-stat-badge ok">达标</span>' : '';
+        var isEmpty = s.value === 0;
+        return '<div class="report-stat-row">' +
+          '<div class="report-stat-top">' +
+            '<div class="report-stat-left">' +
+              '<span class="report-stat-label">' + s.label + '</span>' +
+              badge +
+            '</div>' +
+            '<div class="report-stat-right">' +
+              '<span class="report-stat-value' + (isEmpty ? ' empty' : '') + '">' + s.value + '</span>' +
+              '<span class="report-stat-unit">' + s.unit + ' / ' + s.target + s.unit + '</span>' +
+              '<span class="report-stat-pct">' + pct + '%</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="report-progress"><div class="report-progress-fill ' + fillClass + '" style="width:' + Math.min(pct, 100) + '%;"></div></div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // 食物列表
+    var foodsEl = document.getElementById('reportFoods');
+    if (foodsEl) {
+      foodsEl.style.display = items.length > 0 ? 'block' : 'none';
+      foodsEl.innerHTML = items.map(function(item, index) {
+        var n = item.nutrition;
+        var num = String(index + 1).padStart(2, '0');
+        return '<div class="report-food-item">' +
+          '<span class="report-food-num">' + num + '</span>' +
+          '<div class="report-food-info">' +
+            '<div class="report-food-name">' + item.food.name + '</div>' +
+            '<div class="report-food-detail">' + Math.round(n.weight) + 'g · ' + Math.round(n.cal) + ' kcal · 蛋白' + Math.round(n.protein) + 'g</div>' +
+          '</div>' +
+          '<div class="report-food-controls">' +
+            '<button class="report-food-portion-btn" onclick="adjustPortion(' + index + ', -0.2)">−</button>' +
+            '<input type="number" class="report-food-portion-input" id="portion-' + index + '" value="' + Math.round(item.nutrition.weight) + '" min="1" step="5" onchange="setCustomWeight(' + index + ', this.value)" oninput="onWeightInput(' + index + ', this.value)" title="输入实际克数">g' +
+            '<button class="report-food-portion-btn" onclick="adjustPortion(' + index + ', 0.2)">+</button>' +
+            '<button class="report-food-remove" onclick="removeItem(' + index + ')" title="删除">✕</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // 显示底部操作
+    var footerEl = document.getElementById('reportFooter');
+    if (footerEl) footerEl.style.display = items.length > 0 ? 'block' : 'none';
+
+    // AI 解读（如果有来源信息或食物数据）
+    var aiBlock = document.getElementById('reportAIBlock');
+    var aiText = document.getElementById('reportAIText');
+    if (aiBlock && aiText) {
+      if (items.length > 0) {
+        // 简短 AI 解读（不调用接口，基于数据生成）
+        var advice = generateQuickAdvice(totalCal, totalProtein, totalFat, totalCarb, totalFiber);
+        aiText.textContent = advice;
+        aiBlock.classList.add('show');
+      } else {
+        aiBlock.classList.remove('show');
+      }
+    }
+
+    // 兼容旧结果显示（隐藏元素）
+    var compatList = document.getElementById('resultList');
+    if (compatList) {
+      compatList.innerHTML = items.map(function(item) {
+        var n = item.nutrition;
+        return '<div class="result-item">' +
+          '<span class="result-item-name">' + item.food.name + '</span>' +
+          '<span class="result-item-weight">' + Math.round(n.weight) + 'g · ' + n.cal + 'kcal</span>' +
+        '</div>';
+      }).join('');
+    }
+  }
+
+  // 生成简短的快速营养建议
+  function generateQuickAdvice(cal, protein, fat, carb, fiber) {
+    var parts = [];
+    if (protein >= 20) parts.push('蛋白质摄入充足');
+    else parts.push('蛋白质偏低');
+    if (fiber >= 5) parts.push('膳食纤维达标');
+    else parts.push('建议增加蔬菜');
+    if (fat > 30) parts.push('脂肪偏高，建议减少油炸食物');
+    if (carb > 100) parts.push('碳水偏高，建议减少主食');
+    if (parts.length === 0) parts.push('营养搭配均衡');
+    return parts.join('，') + '。';
+  }
+
+  // ==================== 渲染食物标签（双模式）====================
+  function renderFoodLabels(items) {
+    var container = document.getElementById('vfLabels');
+    if (!container) return;
+    container.innerHTML = '';
+
+    // 检查是否有有效坐标
+    var hasCoords = items.length > 0 && items.every(function(item) {
+      return item.food && typeof item.food.center_x === 'number' && typeof item.food.center_y === 'number';
+    });
+
+    if (hasCoords) {
+      // 实验定位模式：在照片上按坐标显示标签
+      renderCoordinateLabels(container, items);
+    } else {
+      // 默认稳定模式：底部编号标签列表
+      renderEdgeLabels(container, items);
+    }
+  }
+
+  // 坐标模式：在照片上按归一化坐标显示标签
+  function renderCoordinateLabels(container, items) {
+    items.forEach(function(item, index) {
+      var food = item.food;
+      var cx = food.center_x;
+      var cy = food.center_y;
+      var num = String(index + 1).padStart(2, '0');
+      var weight = Math.round(item.nutrition.weight);
+
+      // 扫描点
+      var dot = document.createElement('div');
+      dot.className = 'vf-label-dot';
+      dot.style.left = (cx * 100) + '%';
+      dot.style.top = (cy * 100) + '%';
+      dot.style.transform = 'translate(-50%, -50%)';
+      container.appendChild(dot);
+
+      // 标签位置：在坐标附近偏移
+      var labelLeft = cx * 100;
+      var labelTop = cy * 100;
+      // 如果太靠右，标签放左边
+      if (labelLeft > 60) {
+        labelLeft = labelLeft - 20;
+      } else {
+        labelLeft = labelLeft + 5;
+      }
+      // 如果太靠下，标签放上方
+      if (labelTop > 70) {
+        labelTop = labelTop - 10;
+      } else {
+        labelTop = labelTop + 3;
+      }
+
+      var label = document.createElement('div');
+      label.className = 'vf-label';
+      label.style.left = labelLeft + '%';
+      label.style.top = labelTop + '%';
+      label.innerHTML =
+        '<span class="vf-label-num">' + num + '</span>' +
+        food.name +
+        '<span class="vf-label-weight">' + weight + 'g</span>';
+      container.appendChild(label);
+    });
+  }
+
+  // 边缘模式：底部编号标签列表
+  function renderEdgeLabels(container, items) {
+    var edgeDiv = document.createElement('div');
+    edgeDiv.className = 'vf-edge-labels';
+    items.forEach(function(item, index) {
+      var food = item.food;
+      var num = String(index + 1).padStart(2, '0');
+      var weight = Math.round(item.nutrition.weight);
+      var label = document.createElement('div');
+      label.className = 'vf-label';
+      label.style.position = 'relative';
+      label.innerHTML =
+        '<span class="vf-label-num">' + num + '</span>' +
+        food.name +
+        '<span class="vf-label-weight">' + weight + 'g</span>';
+      edgeDiv.appendChild(label);
+    });
+    container.appendChild(edgeDiv);
   }
 
   window.adjustPortion = function(index, delta) {
@@ -820,6 +1206,9 @@
     if (portionEl) portionEl.value = Math.round(state.pendingItems[index].nutrition.weight);
 
     updateItemNutritionDisplay(index);
+    // 重新计算报告面板
+    renderReportPanel(state.pendingItems);
+    renderFoodLabels(state.pendingItems);
   };
 
   // 直接输入克数
@@ -832,6 +1221,9 @@
     state.pendingItems[index].multiplier = multiplier;
     state.pendingItems[index].nutrition = calcNutrition(food, multiplier);
     updateItemNutritionDisplay(index);
+    // 重新计算报告面板
+    renderReportPanel(state.pendingItems);
+    renderFoodLabels(state.pendingItems);
   };
 
   // 输入过程中实时预览
@@ -844,6 +1236,9 @@
     state.pendingItems[index].multiplier = multiplier;
     state.pendingItems[index].nutrition = n;
     updateItemNutritionDisplay(index);
+    // 重新计算报告面板
+    renderReportPanel(state.pendingItems);
+    renderFoodLabels(state.pendingItems);
   };
 
   // 更新某条食物的营养显示
@@ -875,7 +1270,19 @@
   window.removeItem = function(index) {
     state.pendingItems.splice(index, 1);
     if (state.pendingItems.length === 0) {
-      document.getElementById('resultSection').style.display = 'none';
+      // 重置取景器到空状态
+      var vfEmpty = document.getElementById('vfEmpty');
+      var vfActive = document.getElementById('vfActive');
+      var reportFooter = document.getElementById('reportFooter');
+      if (vfEmpty) vfEmpty.style.display = 'block';
+      if (vfActive) vfActive.classList.remove('show');
+      if (reportFooter) reportFooter.style.display = 'none';
+      // 清空报告面板
+      renderReportPanel([]);
+      renderFoodLabels([]);
+      // 兼容旧元素
+      var section = document.getElementById('resultSection');
+      if (section) section.style.display = 'none';
     } else {
       showResult(state.pendingItems);
     }
@@ -883,7 +1290,19 @@
 
   window.cancelResult = function() {
     state.pendingItems = [];
-    document.getElementById('resultSection').style.display = 'none';
+    // 重置取景器到空状态
+    var vfEmpty = document.getElementById('vfEmpty');
+    var vfActive = document.getElementById('vfActive');
+    var reportFooter = document.getElementById('reportFooter');
+    if (vfEmpty) vfEmpty.style.display = 'block';
+    if (vfActive) vfActive.classList.remove('show');
+    if (reportFooter) reportFooter.style.display = 'none';
+    // 清空报告面板
+    renderReportPanel([]);
+    renderFoodLabels([]);
+    // 兼容旧元素
+    var section = document.getElementById('resultSection');
+    if (section) section.style.display = 'none';
     var displayArea = document.getElementById('photoDisplayArea');
     if (displayArea) displayArea.style.display = 'none';
   };
@@ -975,14 +1394,25 @@
     saveToStorage();
     renderAll();
 
-    // 重置界面
+    // 重置取景器到空状态
     state.pendingItems = [];
-    document.getElementById('resultSection').style.display = 'none';
+    var vfEmpty = document.getElementById('vfEmpty');
+    var vfActive = document.getElementById('vfActive');
+    var reportFooter = document.getElementById('reportFooter');
+    if (vfEmpty) vfEmpty.style.display = 'block';
+    if (vfActive) vfActive.classList.remove('show');
+    if (reportFooter) reportFooter.style.display = 'none';
+    // 清空报告面板
+    renderReportPanel([]);
+    renderFoodLabels([]);
+    // 兼容旧元素
+    var section = document.getElementById('resultSection');
+    if (section) section.style.display = 'none';
     var displayArea = document.getElementById('photoDisplayArea');
     if (displayArea) displayArea.style.display = 'none';
 
     // 给用户一个"已记录"的视觉反馈
-    showFlashMessage('✅ 已记录 ' + meal.totalCal + ' 千卡！');
+    showFlashMessage('已记录 ' + meal.totalCal + ' 千卡');
   };
 
   function showFlashMessage(msg) {
@@ -1072,13 +1502,31 @@
     renderTrendTargetChart(dates, calPctData, proteinPctData);
     // 渲染摘要
     renderTrendSummary(days, calData, proteinData, calTarget, proteinTarget);
+
+    // 趋势内容显示后主动 resize 所有图表
+    setTimeout(function() { resizeTrendCharts(); }, 100);
+  }
+
+  // 存储趋势图表实例，用于 resize
+  var _trendCharts = {};
+
+  function resizeTrendCharts() {
+    if (typeof echarts === 'undefined') return;
+    ['chart-trend-cal', 'chart-trend-macro', 'chart-trend-target'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) {
+        var inst = echarts.getInstanceByDom(el);
+        if (inst) inst.resize();
+      }
+    });
   }
 
   function renderTrendCalChart(dates, calData, calTargetData) {
     var el = document.getElementById('chart-trend-cal');
     if (!el || typeof echarts === 'undefined') return;
 
-    var chart = echarts.init(el);
+    var chart = echarts.getInstanceByDom(el) || echarts.init(el);
+    _trendCharts['cal'] = chart;
     chart.setOption({
       tooltip: { trigger: 'axis', formatter: function(params) {
         var s = params[0].axisValue + '<br/>';
@@ -1097,8 +1545,8 @@
           type: 'line',
           data: calData,
           smooth: true,
-          itemStyle: { color: '#D4875A' },
-          areaStyle: { color: 'rgba(212,135,90,0.15)' },
+          itemStyle: { color: '#E47B50' },
+          areaStyle: { color: 'rgba(228,123,80,0.15)' },
           lineStyle: { width: 2 }
         },
         {
@@ -1117,7 +1565,8 @@
     var el = document.getElementById('chart-trend-macro');
     if (!el || typeof echarts === 'undefined') return;
 
-    var chart = echarts.init(el);
+    var chart = echarts.getInstanceByDom(el) || echarts.init(el);
+    _trendCharts['macro'] = chart;
     chart.setOption({
       tooltip: { trigger: 'axis', formatter: function(params) {
         var s = params[0].axisValue + '<br/>';
@@ -1131,7 +1580,7 @@
       xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 10, rotate: dates.length > 10 ? 45 : 0 } },
       yAxis: { type: 'value', name: '克', axisLabel: { fontSize: 10 } },
       series: [
-        { name: '蛋白质', type: 'line', data: proteinData, smooth: true, itemStyle: { color: '#D4875A' }, lineStyle: { width: 2 } },
+        { name: '蛋白质', type: 'line', data: proteinData, smooth: true, itemStyle: { color: '#E47B50' }, lineStyle: { width: 2 } },
         { name: '脂肪', type: 'line', data: fatData, smooth: true, itemStyle: { color: '#E8A070' }, lineStyle: { width: 1.5 } },
         { name: '碳水', type: 'line', data: carbData, smooth: true, itemStyle: { color: '#C49A6C' }, lineStyle: { width: 1.5 } },
         { name: '蛋白目标', type: 'line', data: proteinTargetData, itemStyle: { color: '#6B9E7A' }, lineStyle: { type: 'dashed', width: 1 }, symbol: 'none' }
@@ -1143,7 +1592,8 @@
     var el = document.getElementById('chart-trend-target');
     if (!el || typeof echarts === 'undefined') return;
 
-    var chart = echarts.init(el);
+    var chart = echarts.getInstanceByDom(el) || echarts.init(el);
+    _trendCharts['target'] = chart;
     chart.setOption({
       tooltip: { trigger: 'axis', formatter: function(params) {
         var s = params[0].axisValue + '<br/>';
@@ -1161,7 +1611,7 @@
           name: '热量达标率',
           type: 'bar',
           data: calPctData,
-          itemStyle: { color: function(p) { return p.value >= 80 ? '#6B9E7A' : p.value >= 50 ? '#D4875A' : '#E55'; } },
+          itemStyle: { color: function(p) { return p.value >= 80 ? '#22664A' : p.value >= 50 ? '#E8B44C' : '#C75B5B'; } },
           barWidth: '30%'
         },
         {
@@ -1564,38 +2014,77 @@
 
   // 滚动到指定区域（用于指引步骤跳转）
   window.scrollToSection = function(id) {
-    var el = document.getElementById(id) || document.querySelector('.' + id);
+    if (id === 'top') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    var el = null;
+    if (id === 'summary') {
+      el = document.getElementById('todaySummary') || document.querySelector('.today-summary');
+    } else if (id === 'records') {
+      el = document.querySelector('.meal-records');
+    } else if (id === 'trend') {
+      el = document.getElementById('trendSection') || document.querySelector('.trend-card');
+    } else {
+      el = document.getElementById(id) || document.querySelector('.' + id);
+    }
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+  };
+
+  // ==================== 折叠全部营养素 ====================
+  window.toggleNutritionDetail = function() {
+    var content = document.getElementById('nutritionDetailContent');
+    var arrow = document.getElementById('nutritionDetailArrow');
+    if (!content) return;
+    if (content.classList.contains('show')) {
+      content.classList.remove('show');
+      if (arrow) arrow.textContent = '▼';
+    } else {
+      content.classList.add('show');
+      if (arrow) arrow.textContent = '▲';
+    }
+    // 展开折叠后 resize 营养配比图
+    setTimeout(function() {
+      if (typeof echarts !== 'undefined') {
+        var macroEl = document.getElementById('chart-macro');
+        if (macroEl) { var inst = echarts.getInstanceByDom(macroEl); if (inst) inst.resize(); }
+      }
+    }, 300);
   };
 
   // ==================== 指向型新手引导 ====================
   var onboardingSteps = [
     {
       target: function() { return document.getElementById('profileBtn'); },
+      targetId: 'profileBtn',
       title: '先设置身体情况',
       body: '点右上角的身体情况按钮，填写年龄、性别、身高体重和胃病/控糖等情况。AI 会按这些信息调整今日营养目标和建议。',
       mobileScrollTop: true
     },
     {
-      target: function() { return document.getElementById('entryPhoto'); },
-      title: '拍一张食物照片',
+      target: function() { return document.getElementById('photoEntryBtn'); },
+      targetId: 'photoEntryBtn',
+      title: '拍照识别一餐',
       body: '适合饭菜、水果、食材。MiMo 会识别图片里的多个食物，通常需要 10-30 秒。'
     },
     {
-      target: function() { return document.getElementById('entryScan'); },
+      target: function() { return document.getElementById('labelScanEntryBtn'); },
+      targetId: 'labelScanEntryBtn',
       title: '扫描包装营养表',
       body: '适合奶粉、零食、饮料、保健品等包装食品。营养表字多，可能需要 20-60 秒。'
     },
     {
-      target: function() { return document.getElementById('entryVoice'); },
-      title: '也可以直接说或输入',
+      target: function() { return document.getElementById('textEntryBtn'); },
+      targetId: 'textEntryBtn',
+      title: '文字或手机输入法语音输入',
       body: '网页语音不稳定时，可以用手机输入法自带语音，例如"一碗米饭和一个鸡蛋"。'
     },
     {
-      target: function() { return document.getElementById('todaySummary') || document.querySelector('.today-summary') || document.querySelector('.export-report-section'); },
-      title: '查看建议，导出报告',
+      target: function() { return document.querySelector('.export-report-section') || document.getElementById('todaySummary') || document.querySelector('.today-summary'); },
+      targetId: 'exportReportSection',
+      title: '查看建议并导出报告',
       body: '记录食物后，这里会显示今日营养建议。需要提交或分享时，点击"导出报告"生成饮食记录报告。',
       mobileScrollBottom: true
     }
@@ -1614,13 +2103,25 @@
     var targetEl = null;
     try { targetEl = step.target(); } catch(e) { targetEl = null; }
 
-    // 如果目标元素不存在，跳过
+    // 目标元素不存在时输出警告，不静默跳过
     if (!targetEl) {
-      onboardingIndex++;
-      if (onboardingIndex < onboardingSteps.length) {
-        showOnboardingStep();
-      } else {
-        closeOnboarding();
+      console.warn('[使用指引] 第' + (onboardingIndex + 1) + '步目标元素未找到: ' + (step.targetId || 'unknown'));
+      // 显示提示卡片，告知用户该步骤目标不存在
+      var warnOverlay = document.getElementById('onboardingOverlay');
+      var warnCard = document.getElementById('onboardingCard');
+      if (warnOverlay && warnCard) {
+        warnOverlay.style.display = 'block';
+        warnCard.innerHTML =
+          '<div class="onboarding-card-inner">' +
+          '<div class="onboarding-step-num">' + (onboardingIndex + 1) + ' / ' + onboardingSteps.length + '</div>' +
+          '<h3>' + step.title + '</h3>' +
+          '<p>' + step.body + '</p>' +
+          '<p style="color:#999;font-size:13px;margin-top:8px;">（目标按钮未找到，可直接阅读说明后继续）</p>' +
+          '<div class="onboarding-actions">' +
+          '<button class="onboarding-skip-btn" onclick="closeOnboarding()">跳过</button>' +
+          '<button class="onboarding-next-btn" onclick="onboardingNext()">下一步</button>' +
+          '</div>' +
+          '</div>';
       }
       return;
     }
@@ -1689,18 +2190,28 @@
           arrow.style.borderLeft = 'none';
         }
       } else {
-        // 移动端：卡片固定在底部
-        cardLeft = 12;
-        cardTop = winH - cardH - 12;
-
-        // 箭头指向高亮区域
-        var arrowX = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
-        var arrowY = -8;
-        // 如果高亮在卡片上方，箭头朝上
-        arrow.style.left = (arrowX - cardLeft - 8) + 'px';
-        arrow.style.top = arrowY + 'px';
-        arrow.style.borderBottom = 'none';
-        arrow.style.borderLeft = 'none';
+        // 移动端：默认卡片在底部，但如果高亮按钮也在底部则放顶部，避免遮挡
+        var btnBottom = rect.bottom;
+        var cardTopDefault = winH - cardH - 12;
+        // 如果按钮底部位于屏幕下半部分（超过55%），卡片放顶部
+        if (btnBottom > winH * 0.55) {
+          // 高亮按钮在底部区域，卡片放顶部
+          cardLeft = 12;
+          cardTop = 12;
+          arrow.style.left = (Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2)) - 20) + 'px';
+          arrow.style.top = cardH - 8 + 'px';
+          arrow.style.borderTop = 'none';
+          arrow.style.borderLeft = 'none';
+        } else {
+          cardLeft = 12;
+          cardTop = cardTopDefault;
+          // 箭头指向高亮区域
+          var arrowX = Math.max(30, Math.min(winW - 30, rect.left + rect.width / 2));
+          arrow.style.left = (arrowX - cardLeft - 8) + 'px';
+          arrow.style.top = '-8px';
+          arrow.style.borderBottom = 'none';
+          arrow.style.borderLeft = 'none';
+        }
       }
 
       // 边界检查
@@ -1739,6 +2250,8 @@
       closeOnboarding();
     }
   };
+  // 兼容别名
+  window.nextOnboardingStep = window.onboardingNext;
 
   window.onboardingPrev = function() {
     if (onboardingIndex > 0) {
@@ -1761,27 +2274,43 @@
 
   function showPhotoProgress(dataUrl) {
     lastPhotoDataUrl = dataUrl;
+
+    // 兼容旧进度面板（隐藏元素）
     var panel = document.getElementById('photoProgressPanel');
     var thumb = document.getElementById('progressPanelThumb');
-    var displayArea = document.getElementById('photoDisplayArea');
-
     if (thumb) thumb.src = dataUrl;
     if (panel) panel.style.display = 'block';
-    if (displayArea) displayArea.style.display = 'none';
+
+    // 取景器照片已由 handleBigPhotoUpload 设置，这里确保状态正确
+    var scanLine = document.getElementById('vfScanLine');
+    if (scanLine) scanLine.classList.add('active');
+    var badge = document.getElementById('vfStatusBadge');
+    if (badge) {
+      badge.className = 'vf-status-badge scanning';
+      badge.textContent = '正在压缩上传...';
+    }
 
     updatePhotoProgressStep(1, 'done');
     updatePhotoProgressStep(2, 'active');
     updatePhotoProgressStep(3, 'waiting');
     updatePhotoProgressStep(4, 'waiting');
 
+    // 同步取景器进度步骤
+    updateVFProgressStep(1, 'done');
+    updateVFProgressStep(2, 'active');
+    updateVFProgressStep(3, 'waiting');
+    updateVFProgressStep(4, 'waiting');
+
     var sub = document.getElementById('progressPanelSub');
     if (sub) sub.textContent = '正在压缩上传...';
-    var hint = document.getElementById('progressPanelHint');
-    if (hint) hint.textContent = '识别时间较长，请不要关闭页面';
+    var hint = document.getElementById('vfProgressHint');
+    if (hint) hint.textContent = '正在压缩上传...';
     var errBox = document.getElementById('progressPanelError');
     if (errBox) errBox.style.display = 'none';
+    var vfErrBox = document.getElementById('vfProgressError');
+    if (vfErrBox) vfErrBox.classList.remove('show');
 
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   function updatePhotoProgressStep(step, status) {
@@ -1803,6 +2332,17 @@
     updatePhotoProgressStep(3, 'active');
     var sub = document.getElementById('progressPanelSub');
     if (sub) sub.textContent = 'MiMo 正在看图识别，通常需要 10-30 秒';
+
+    // 同步取景器
+    updateVFProgressStep(2, 'done');
+    updateVFProgressStep(3, 'active');
+    var hint = document.getElementById('vfProgressHint');
+    if (hint) hint.textContent = 'MiMo 正在识别食物，预计 10-30 秒...';
+    var badge = document.getElementById('vfStatusBadge');
+    if (badge) {
+      badge.className = 'vf-status-badge scanning';
+      badge.textContent = 'MiMo 识别中...';
+    }
   }
 
   function showPhotoProgressMatching() {
@@ -1810,14 +2350,37 @@
     updatePhotoProgressStep(4, 'active');
     var sub = document.getElementById('progressPanelSub');
     if (sub) sub.textContent = '正在匹配营养数据...';
+
+    // 同步取景器
+    updateVFProgressStep(3, 'done');
+    updateVFProgressStep(4, 'active');
+    var hint = document.getElementById('vfProgressHint');
+    if (hint) hint.textContent = '正在匹配营养数据...';
+    var badge = document.getElementById('vfStatusBadge');
+    if (badge) {
+      badge.className = 'vf-status-badge scanning';
+      badge.textContent = '匹配营养中...';
+    }
   }
 
   function showPhotoProgressDone() {
     updatePhotoProgressStep(4, 'done');
     var sub = document.getElementById('progressPanelSub');
-    if (sub) sub.textContent = '识别完成！';
+    if (sub) sub.textContent = '识别完成';
     var panel = document.getElementById('photoProgressPanel');
     setTimeout(function() { if (panel) panel.style.display = 'none'; }, 1500);
+
+    // 同步取景器：停止扫描线，显示完成徽章
+    updateVFProgressStep(4, 'done');
+    var scanLine = document.getElementById('vfScanLine');
+    if (scanLine) scanLine.classList.remove('active');
+    var hint = document.getElementById('vfProgressHint');
+    if (hint) hint.textContent = '识别完成';
+    var badge = document.getElementById('vfStatusBadge');
+    if (badge) {
+      badge.className = 'vf-status-badge done';
+      badge.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><polyline points="20 6 9 17 4 12"/></svg> 识别完成';
+    }
   }
 
   function showPhotoProgressError(msg) {
@@ -1828,12 +2391,34 @@
     var errMsg = document.getElementById('ppErrorMsg');
     if (errMsg) errMsg.textContent = msg || '识别超时或失败';
     if (errBox) errBox.style.display = 'block';
+
+    // 同步取景器：停止扫描线，显示错误
+    updateVFProgressStep(2, 'error');
+    updateVFProgressStep(3, 'error');
+    var scanLine = document.getElementById('vfScanLine');
+    if (scanLine) scanLine.classList.remove('active');
+    var badge = document.getElementById('vfStatusBadge');
+    if (badge) {
+      badge.className = 'vf-status-badge error';
+      badge.textContent = '识别失败';
+    }
+    var vfErrBox = document.getElementById('vfProgressError');
+    if (vfErrBox) {
+      vfErrBox.classList.add('show');
+      var vfErrMsg = document.getElementById('vfErrorMsg');
+      if (vfErrMsg) vfErrMsg.textContent = msg || '识别超时或失败';
+    }
   }
 
   window.retryPhotoRecognize = function() {
     var panel = document.getElementById('photoProgressPanel');
     if (panel) panel.style.display = 'none';
     if (lastPhotoDataUrl) {
+      // 检查是否直接打开 HTML（file 协议）
+      if (window.location.protocol === 'file:') {
+        showPhotoProgressError('当前是直接打开HTML，无法使用AI识别。请运行start_demo.ps1后访问http://localhost:8080');
+        return;
+      }
       // 模拟重新选择文件
       var img = new Image();
       img.onload = function() {
@@ -1849,28 +2434,60 @@
         showPhotoProgress(lastPhotoDataUrl);
         // 延迟一下让 UI 先渲染
         setTimeout(function() {
-          showPhotoProgressUploading();
-          fetch('/api/recognize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: compressed })
-          })
-          .then(function(res) { return res.json(); })
-          .then(function(data) {
-            if (data.task_id) {
-              pollWithProgress(data.task_id);
-            } else {
-              showPhotoProgressError('无法启动识别');
-            }
-          })
-          .catch(function() {
-            showPhotoProgressError('网络错误');
-          });
+          // 预检查 MiMo 是否配置
+          fetch('/api/mimo_status')
+            .then(function(res) { return res.json(); })
+            .then(function(status) {
+              if (!status.configured) {
+                showPhotoProgressError('MiMo未配置，无法进行AI识别。请先设置MIMO_API_KEY环境变量再启动服务。');
+                return;
+              }
+              doRetryUpload(compressed);
+            })
+            .catch(function() {
+              // mimo_status 检查失败，继续尝试
+              doRetryUpload(compressed);
+            });
         }, 300);
       };
       img.src = lastPhotoDataUrl;
     }
   };
+
+  // retryPhotoRecognize 的实际上传逻辑
+  function doRetryUpload(compressed) {
+    showPhotoProgressUploading();
+    fetch('/api/recognize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: compressed })
+    })
+    .then(function(res) {
+      if (!res.ok) {
+        return res.json().then(function(errData) {
+          throw new Error(errData.error || errData.message || ('服务器错误 ' + res.status));
+        }).catch(function() {
+          throw new Error('服务器错误 ' + res.status);
+        });
+      }
+      return res.json();
+    })
+    .then(function(data) {
+      if (data.task_id) {
+        pollWithProgress(data.task_id);
+      } else {
+        var errMsg = data.error || data.message || '无法启动识别';
+        showPhotoProgressError(errMsg);
+      }
+    })
+    .catch(function(err) {
+      var safeMsg = err.message || '网络错误';
+      if (safeMsg.indexOf('key') >= 0 || safeMsg.indexOf('Key') >= 0 || safeMsg.indexOf('API') >= 0) {
+        safeMsg = '网络错误，请检查服务是否正常运行';
+      }
+      showPhotoProgressError(safeMsg);
+    });
+  }
 
   // 轮询带进度面板
   function pollWithProgress(taskId) {
@@ -1885,7 +2502,17 @@
       }
 
       fetch('/api/result/' + taskId)
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) {
+            return res.json().then(function(errData) {
+              throw new Error(errData.error || errData.message || ('服务器错误 ' + res.status));
+            }).catch(function(e) {
+              if (e.message) throw e;
+              throw new Error('服务器错误 ' + res.status);
+            });
+          }
+          return res.json();
+        })
         .then(function(data) {
           if ((data.success === true || data.status === 'done') && data.foods && data.foods.length > 0) {
             showPhotoProgressMatching();
